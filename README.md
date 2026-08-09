@@ -6,6 +6,9 @@ schema-boundary scenarios; validates response contracts; produces JSON, JUnit XM
 reports; optionally uses GitHub Copilot for test advice and failure analysis; and notifies Slack or
 email recipients.
 
+[Read the documentation](https://miguelelgallo.github.io/api-test-pilot/), or start with the
+[real Postman Echo tutorial](docs/tutorials/test-a-public-api.md).
+
 ## Initialize a target
 
 Prerequisites are Python 3.12+ and [uv](https://docs.astral.sh/uv/). Clone this private repository,
@@ -52,7 +55,7 @@ uv run --no-sync api-test-pilot init \
   --allow-method POST
 ```
 
-The method allowlist is embedded in the generated suite and enforced again immediately before
+The list of allowed methods is embedded in the generated suite and enforced again immediately before
 each HTTP request. Hand-editing a scenario therefore cannot bypass the policy accidentally. This
 repository opts into `POST` only for its deterministic in-process FastAPI fixture.
 
@@ -97,7 +100,7 @@ Postman Collection v2.0/v2.1 JSON is detected automatically. The safe declarativ
 
 - nested folders and concrete requests;
 - collection variables plus repeated `--variable NAME=VALUE` overrides;
-- raw JSON or text bodies, query parameters, and non-authorization headers;
+- raw JSON bodies, query parameters, and non-authorization headers;
 - collection- or request-level bearer, basic, and API-key authentication without retaining
   credential values; and
 - saved response status codes.
@@ -111,9 +114,9 @@ uv run --no-sync api-test-pilot init \
   --variable tenant=north
 ```
 
-Unresolved variables, executable pre-request/test scripts, multipart/form-data bodies, and
-unsupported authentication mechanisms fail explicitly. API Test Pilot never executes arbitrary
-Postman JavaScript or silently drops it.
+Unresolved variables, executable pre-request/test scripts, non-JSON or multipart/form-data bodies,
+and unsupported authentication mechanisms fail explicitly. API Test Pilot never executes
+arbitrary Postman JavaScript or silently drops it.
 
 ## Schema-driven scenarios
 
@@ -171,5 +174,5 @@ uv run --no-sync ty check
 uv run --no-sync pytest
 ```
 
-See [the architecture guide](docs/architecture.md) for module boundaries and the complete data
-flow. Security reporting instructions are in [SECURITY.md](SECURITY.md).
+Read [how generation works](docs/explanation/how-generation-works.md) for the complete data flow.
+Security reporting instructions are in [SECURITY.md](SECURITY.md).

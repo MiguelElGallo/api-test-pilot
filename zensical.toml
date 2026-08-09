@@ -1,0 +1,130 @@
+[project]
+site_url = "https://miguelelgallo.github.io/api-test-pilot/"
+site_name = "API Test Pilot"
+site_description = "Generate safe API tests from OpenAPI, Swagger, or Postman files."
+site_author = "Miguel Peredo"
+copyright = "Copyright &copy; 2026 Miguel Peredo"
+repo_url = "https://github.com/MiguelElGallo/api-test-pilot"
+repo_name = "MiguelElGallo/api-test-pilot"
+edit_uri = "edit/main/docs/"
+extra_css = ["stylesheets/extra.css"]
+
+nav = [
+  { "Home" = "index.md" },
+  { "Tutorials" = [
+    "tutorials/index.md",
+    { "Test a public API" = "tutorials/test-a-public-api.md" },
+  ] },
+  { "How-to guides" = [
+    "how-to/index.md",
+    { "Point to another API" = "how-to/point-to-another-api.md" },
+    { "Add authentication" = "how-to/add-authentication.md" },
+    { "Allow write requests" = "how-to/allow-write-requests.md" },
+    { "Read reports and use AI" = "how-to/read-reports-and-use-ai.md" },
+    { "Send notifications" = "how-to/send-notifications.md" },
+  ] },
+  { "Reference" = [
+    "reference/index.md",
+    { "Command line" = "reference/command-line.md" },
+    { "Project configuration" = "reference/project-configuration.md" },
+    { "Supported specifications" = "reference/supported-specifications.md" },
+    { "Scenario suite" = "reference/scenario-suite.md" },
+    { "Report formats" = "reference/report-formats.md" },
+    { "Environment variables" = "reference/environment-variables.md" },
+  ] },
+  { "Explanation" = [
+    "explanation/index.md",
+    { "How generation works" = "explanation/how-generation-works.md" },
+    { "Why tests are safe by default" = "explanation/safety-model.md" },
+    { "One configuration for local and CI" = "explanation/one-configuration.md" },
+    { "Where AI helps" = "explanation/ai-boundary.md" },
+  ] },
+]
+
+[project.theme]
+variant = "classic"
+language = "en"
+features = [
+  "content.code.annotate",
+  "content.code.copy",
+  "content.tabs.link",
+  "navigation.footer",
+  "navigation.indexes",
+  "navigation.instant",
+  "navigation.instant.prefetch",
+  "navigation.path",
+  "navigation.sections",
+  "navigation.tabs",
+  "navigation.tabs.sticky",
+  "navigation.top",
+  "navigation.tracking",
+  "search.highlight",
+  "search.suggest",
+  "toc.follow",
+]
+
+[project.theme.icon]
+logo = "lucide/route"
+repo = "fontawesome/brands/github"
+
+[project.theme.font]
+text = "Inter"
+code = "JetBrains Mono"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme)"
+toggle.icon = "lucide/sun-moon"
+toggle.name = "Use the light theme"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+primary = "teal"
+accent = "green"
+toggle.icon = "lucide/sun"
+toggle.name = "Use the dark theme"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+primary = "teal"
+accent = "green"
+toggle.icon = "lucide/moon"
+toggle.name = "Follow the system theme"
+
+[[project.extra.social]]
+icon = "fontawesome/brands/github"
+link = "https://github.com/MiguelElGallo/api-test-pilot"
+
+[project.validation]
+invalid_links = true
+invalid_link_anchors = true
+
+[project.markdown_extensions]
+abbr = {}
+admonition = {}
+attr_list = {}
+def_list = {}
+footnotes = {}
+md_in_html = {}
+toc = { permalink = true }
+pymdownx.details = {}
+pymdownx.highlight = {
+  anchor_linenums = true,
+  line_spans = "__span",
+  pygments_lang_class = true,
+}
+pymdownx.inlinehilite = {}
+pymdownx.magiclink = {}
+pymdownx.snippets = {}
+pymdownx.superfences = {
+  custom_fences = [
+    {
+      name = "mermaid",
+      class = "mermaid",
+      format = "pymdownx.superfences.fence_code_format",
+    },
+  ],
+}
+pymdownx.tabbed = { alternate_style = true, combine_header_slug = true }
+pymdownx.tasklist = { custom_checkbox = true }

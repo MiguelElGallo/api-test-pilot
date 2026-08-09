@@ -1,0 +1,15 @@
+# Captured on 2026-08-09 against https://postman-echo.com
+
+$ uv run --no-sync api-test-pilot init --spec examples/postman-echo.collection.json
+Initialized .api-test-pilot/config.yaml, generated-scenarios.yaml, and .github/workflows/api-regression.yml with 3 safe scenarios
+
+$ uv run --no-sync api-test-pilot run --config .api-test-pilot/config.yaml
+Regression result: 3/3 passed; reports: reports/report.json, reports/junit.xml, reports/report.html
+
+$ jq '{total, passed, failed, base_url}' reports/report.json
+{
+  "total": 3,
+  "passed": 3,
+  "failed": 0,
+  "base_url": "https://postman-echo.com"
+}

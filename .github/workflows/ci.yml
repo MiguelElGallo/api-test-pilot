@@ -69,7 +69,7 @@ jobs:
           done
           curl --fail --silent http://127.0.0.1:8000/health
       - name: Generate functional, negative, and edge scenarios
-        run: uv run --no-sync api-test-pilot generate --config .api-test-pilot/config.yaml
+        run: uv run --no-sync api-test-pilot generate --config .api-test-pilot/ci.yaml
       - name: Generate AI-assisted test recommendations
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         env:
@@ -78,14 +78,14 @@ jobs:
           set -o pipefail
           mkdir -p reports
           uv run --no-sync api-test-pilot generate \
-            --config .api-test-pilot/config.yaml \
+            --config .api-test-pilot/ci.yaml \
             --ai | tee reports/ai-generation-advice.txt
       - name: Execute regression
         id: regression
         continue-on-error: true
         run: >-
           uv run --no-sync api-test-pilot run
-          --config .api-test-pilot/config.yaml
+          --config .api-test-pilot/ci.yaml
       - name: Analyze failures with GitHub Copilot
         if: >-
           steps.regression.outcome == 'failure' &&

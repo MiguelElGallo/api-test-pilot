@@ -211,6 +211,21 @@ def test_postman_resolves_variables_auth_headers_and_examples() -> None:
             },
             "Authorization header cannot be persisted",
         ),
+        (
+            {
+                "item": [
+                    {
+                        "name": "Text body",
+                        "request": {
+                            "method": "POST",
+                            "url": "https://api.example.test/x",
+                            "body": {"mode": "raw", "raw": "plain text"},
+                        },
+                    }
+                ]
+            },
+            "raw request bodies must contain valid JSON",
+        ),
     ],
 )
 def test_postman_rejects_ambiguous_or_executable_features(

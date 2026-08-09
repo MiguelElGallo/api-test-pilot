@@ -531,7 +531,7 @@ def parse_postman(document: dict[str, Any], *, variables: dict[str, str] | None 
         body = request.get("body", {})
         if isinstance(body, dict) and body.get("mode") not in {None, "raw"}:
             raise PostmanFeatureError(
-                f"Postman body mode '{body.get('mode')}' is not supported; use raw JSON or text"
+                f"Postman body mode '{body.get('mode')}' is not supported; use raw JSON"
             )
         raw_body = body.get("raw") if isinstance(body, dict) else None
         body_example: Any | None = None
@@ -539,8 +539,10 @@ def parse_postman(document: dict[str, Any], *, variables: dict[str, str] | None 
             interpolated_body = _interpolate_postman(str(raw_body), resolved_variables)
             try:
                 body_example = json.loads(interpolated_body)
-            except ValueError:
-                body_example = interpolated_body
+            except ValueError as exc:
+                raise PostmanFeatureError(
+                    "Postman raw request bodies must contain valid JSON"
+                ) from exc
         security = _postman_request_security(
             index=index,
             item=item,

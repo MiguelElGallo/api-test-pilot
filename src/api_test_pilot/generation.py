@@ -296,7 +296,12 @@ def _negative_scenario(operation: Operation) -> Scenario:
         "unknown-resource",
         expected_statuses=[404],
     )
-    return scenario.model_copy(update={"path": f"{scenario.path.rstrip('/')}/__invalid__"})
+    return scenario.model_copy(
+        update={
+            "path": f"{scenario.path.rstrip('/')}/__invalid__",
+            "description": "Requests an unknown resource and expects a not-found response.",
+        }
+    )
 
 
 def generate_suite(
