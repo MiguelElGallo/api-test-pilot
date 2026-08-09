@@ -1,14 +1,15 @@
-"""Tests for optional GitHub Models and notification adapters."""
+"""Tests for optional GitHub Copilot CLI and notification adapters."""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from subprocess import CompletedProcess
 from typing import Self
 
 import httpx
 import pytest
 
-from api_test_pilot.ai import AIAnalysisError, GitHubModelsClient
+from api_test_pilot.ai import AIAnalysisError, CopilotClient
 from api_test_pilot.models import NotificationSettings, RunSummary
 from api_test_pilot.notifications import (
     notify_configured,
@@ -32,59 +33,47 @@ def _empty_summary() -> RunSummary:
     )
 
 
-def test_ai_client_is_optional_without_token(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Local users should not need an AI credential for deterministic tests."""
-    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+def test_ai_client_is_optional_without_cli(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Local users should not need Copilot CLI for deterministic tests."""
+    monkeypatch.delenv("COPILOT_CLI", raising=False)
+    monkeypatch.setattr("api_test_pilot.ai.shutil.which", lambda _name: None)
 
-    assert GitHubModelsClient.from_environment() is None
+    assert CopilotClient.discover() is None
 
 
-def test_ai_client_reads_safe_environment_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Provider settings should be configurable without changing implementation code."""
-    monkeypatch.setenv("GITHUB_TOKEN", "fixture-token")
-    monkeypatch.setenv("GITHUB_MODELS_MODEL", "openai/fixture")
+def test_ai_client_reads_executable_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The Copilot executable should be configurable without changing implementation code."""
+    monkeypatch.setenv("COPILOT_CLI", "/fixture/copilot")
 
-    client = GitHubModelsClient.from_environment()
+    client = CopilotClient.discover()
 
     assert client is not None
-    assert client.model == "openai/fixture"
+    assert client.executable == "/fixture/copilot"
     assert client.analyze_failures(_empty_summary()) == "No failed scenarios require AI analysis."
 
 
 def test_ai_client_parses_completion(monkeypatch: pytest.MonkeyPatch) -> None:
-    """GitHub Models completion content should be returned as plain text."""
+    """GitHub Copilot CLI output should be returned as plain text."""
 
-    class Response:
-        """Small response double matching the used HTTPX methods."""
+    def run(*_args: object, **_kwargs: object) -> CompletedProcess[str]:
+        """Return a successful Copilot CLI process result."""
+        return CompletedProcess([], 0, stdout="Check the boundary.\n", stderr="")
 
-        def raise_for_status(self) -> None:
-            """Represent a successful response."""
+    monkeypatch.setattr("api_test_pilot.ai.subprocess.run", run)
 
-        def json(self) -> dict[str, object]:
-            """Return the expected completion envelope."""
-            return {"choices": [{"message": {"content": "Check the boundary."}}]}
-
-    monkeypatch.setattr(httpx, "post", lambda *_args, **_kwargs: Response())
-
-    assert GitHubModelsClient("token").generation_advice({}) == "Check the boundary."
+    assert CopilotClient().generation_advice({}) == "Check the boundary."
 
 
-def test_ai_client_wraps_invalid_response(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Malformed provider responses should become actionable domain errors."""
+def test_ai_client_wraps_failed_process(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Failed Copilot processes should become actionable domain errors."""
 
-    class Response:
-        """Response double that lacks completion choices."""
+    def run(*_args: object, **_kwargs: object) -> CompletedProcess[str]:
+        """Return a failed Copilot CLI process result."""
+        return CompletedProcess([], 7, stdout="", stderr="authentication failed")
 
-        def raise_for_status(self) -> None:
-            """Represent a successful HTTP response."""
-
-        def json(self) -> dict[str, object]:
-            """Return a malformed completion body."""
-            return {}
-
-    monkeypatch.setattr(httpx, "post", lambda *_args, **_kwargs: Response())
-    with pytest.raises(AIAnalysisError, match="GitHub Models request failed"):
-        GitHubModelsClient("token").generation_advice({})
+    monkeypatch.setattr("api_test_pilot.ai.subprocess.run", run)
+    with pytest.raises(AIAnalysisError, match="exit code 7"):
+        CopilotClient().generation_advice({})
 
 
 def test_no_notification_configuration_is_a_noop() -> None:

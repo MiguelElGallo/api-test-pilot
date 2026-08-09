@@ -17,7 +17,7 @@ flowchart LR
     X --> R
     E --> R
     R --> O["JSON / JUnit / HTML reports"]
-    R --> AI["GitHub Models failure triage"]
+    R --> AI["GitHub Copilot CLI failure triage"]
     O --> S["Slack / SMTP notifications"]
     AI --> O
 ```
@@ -28,7 +28,7 @@ flowchart LR
 - `contracts` owns format detection and normalization.
 - `generation` owns deterministic scenario strategies.
 - `runner` owns HTTP execution and observed outcomes.
-- `ai` owns the optional GitHub Models boundary.
+- `ai` owns the optional, constrained GitHub Copilot CLI boundary.
 - `reporting` owns JSON, JUnit XML, and HTML serialization.
 - `notifications` owns Slack and SMTP delivery.
 - `cli` composes those modules without embedding domain logic.

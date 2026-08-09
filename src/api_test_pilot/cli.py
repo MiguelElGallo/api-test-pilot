@@ -9,7 +9,7 @@ from typing import Annotated
 import typer
 import yaml
 
-from api_test_pilot.ai import AIAnalysisError, GitHubModelsClient
+from api_test_pilot.ai import AIAnalysisError, CopilotClient
 from api_test_pilot.contracts import normalize_contract
 from api_test_pilot.generation import generate_suite
 from api_test_pilot.loaders import load_contract
@@ -42,7 +42,7 @@ def generate(
         "generated-scenarios.yaml"
     ),
     base_url: Annotated[str | None, typer.Option(help="Override the contract server URL.")] = None,
-    ai: Annotated[bool, typer.Option(help="Print optional GitHub Models test advice.")] = False,
+    ai: Annotated[bool, typer.Option(help="Print optional GitHub Copilot test advice.")] = False,
 ) -> None:
     """Generate deterministic functional, negative, and edge scenarios."""
     document = load_contract(spec)
@@ -51,9 +51,9 @@ def generate(
     _write_suite(suite, output)
     typer.echo(f"Generated {len(suite.scenarios)} scenarios in {output}")
     if ai:
-        client = GitHubModelsClient.from_environment()
+        client = CopilotClient.discover()
         if client is None:
-            typer.echo("AI advice skipped: GITHUB_TOKEN is not configured.", err=True)
+            typer.echo("AI advice skipped: GitHub Copilot CLI is not installed.", err=True)
             raise typer.Exit(2)
         advice = client.generation_advice(
             {
@@ -79,20 +79,20 @@ def run(
     ),
     ai_analysis: Annotated[
         bool,
-        typer.Option(help="Ask GitHub Models to analyze failed scenarios."),
+        typer.Option(help="Ask GitHub Copilot CLI to analyze failed scenarios."),
     ] = False,
 ) -> None:
     """Run a suite, write reports, and fail when any scenario fails."""
     summary = run_suite(_read_suite(suite_path))
     if ai_analysis and summary.failed:
-        client = GitHubModelsClient.from_environment()
+        client = CopilotClient.discover()
         if client is not None:
             try:
                 summary.ai_analysis = client.analyze_failures(summary)
             except AIAnalysisError as exc:
                 summary.ai_analysis = str(exc)
         else:
-            summary.ai_analysis = "AI analysis skipped: GITHUB_TOKEN is not configured."
+            summary.ai_analysis = "AI analysis skipped: GitHub Copilot CLI is not installed."
     outputs = write_all(summary, report_dir)
     typer.echo(
         f"Regression result: {summary.passed}/{summary.total} passed; reports: "

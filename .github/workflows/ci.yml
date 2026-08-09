@@ -9,10 +9,10 @@ on:
   schedule:
     - cron: "17 5 * * 1"
 
-# Use least privilege; Models access powers optional failure analysis.
+# Use least privilege; Copilot requests power AI advice and failure analysis.
 permissions:
   contents: read
-  models: read
+  copilot-requests: write
 
 concurrency:
   group: api-regression-${{ github.ref }}
@@ -57,6 +57,8 @@ jobs:
         run: |
           uv python install 3.12
           uv sync --all-extras --locked --no-editable
+      - name: Install GitHub Copilot CLI
+        run: npm install --global @github/copilot@1.0.78
       - name: Start deterministic example API
         run: |
           uv run --no-sync uvicorn api_test_pilot.example_api:app --host 127.0.0.1 --port 8000 &
@@ -76,6 +78,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
+          set -o pipefail
           mkdir -p reports
           uv run --no-sync api-test-pilot generate \
             --spec http://127.0.0.1:8000/openapi.json \

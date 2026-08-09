@@ -2,7 +2,7 @@
 
 API Test Pilot generates executable functional, negative, and edge-case API scenarios from
 OpenAPI/Swagger or Postman collections. It runs those scenarios in CI, produces JSON, JUnit XML,
-and HTML reports, optionally asks GitHub Models for test suggestions and failure analysis, and can
+and HTML reports, optionally asks GitHub Copilot for test suggestions and failure analysis, and can
 notify Slack or email recipients.
 
 The repository includes a deterministic FastAPI fixture for CI and demonstrates public-contract
@@ -48,13 +48,14 @@ URLs or use `--base-url` for the target environment.
 
 ## AI-assisted workflows
 
-GitHub Actions grants the regression job only `contents: read` and `models: read`. The job-scoped
-`GITHUB_TOKEN` calls GitHub Models, so no standalone AI API key is stored. Locally, use a GitHub
-token with Models read access:
+GitHub Actions installs GitHub Copilot CLI and grants only `contents: read` plus
+`copilot-requests: write`. The job-scoped `GITHUB_TOKEN` authenticates Copilot, so no standalone AI
+API key is stored. Locally, install and authenticate GitHub Copilot CLI first:
 
 ```bash
-GITHUB_TOKEN="..." uv run --no-sync api-test-pilot generate --spec openapi.yaml --ai
-GITHUB_TOKEN="..." uv run --no-sync api-test-pilot run --suite generated-scenarios.yaml --ai-analysis
+copilot login
+uv run --no-sync api-test-pilot generate --spec openapi.yaml --ai
+uv run --no-sync api-test-pilot run --suite generated-scenarios.yaml --ai-analysis
 ```
 
 Deterministic generation never depends on AI. Generation advice is printed separately, while
@@ -100,5 +101,5 @@ See [the architecture guide](docs/architecture.md) for module boundaries and the
 
 - Only load contracts from trusted paths or HTTPS sources.
 - Generated suites may contain example data from the source contract; review before publishing.
-- GitHub Models receives only a compact failure summary without request headers or request bodies.
+- GitHub Copilot receives only a compact failure summary without request headers or request bodies.
 - Slack webhooks and SMTP credentials belong in GitHub Actions secrets, never source control.
