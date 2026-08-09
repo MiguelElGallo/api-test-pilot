@@ -17,7 +17,7 @@ def settings_from_environment() -> NotificationSettings:
     return NotificationSettings(
         slack_webhook_url=os.getenv("SLACK_WEBHOOK_URL") or None,
         smtp_host=os.getenv("SMTP_HOST") or None,
-        smtp_port=int(os.getenv("SMTP_PORT", "587")),
+        smtp_port=int(os.getenv("SMTP_PORT") or "587"),
         smtp_username=os.getenv("SMTP_USERNAME") or None,
         smtp_password=os.getenv("SMTP_PASSWORD") or None,
         email_from=os.getenv("EMAIL_FROM") or None,

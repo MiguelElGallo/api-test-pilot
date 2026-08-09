@@ -105,6 +105,13 @@ def test_notification_settings_load_from_environment(monkeypatch: pytest.MonkeyP
     assert settings.email_to == "team@example.test"
 
 
+def test_empty_smtp_port_uses_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unset GitHub secret rendered as an empty string should retain the default port."""
+    monkeypatch.setenv("SMTP_PORT", "")
+
+    assert settings_from_environment().smtp_port == 587
+
+
 def test_email_requires_complete_settings() -> None:
     """Partially configured SMTP delivery should fail with the missing fields."""
     with pytest.raises(ValueError, match="Incomplete email settings"):
