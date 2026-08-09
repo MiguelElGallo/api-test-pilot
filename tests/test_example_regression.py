@@ -14,7 +14,12 @@ def test_generated_suite_passes_against_example_api() -> None:
     """Generated functional, negative, and edge scenarios should all pass live."""
     with TestClient(app) as client:
         contract = parse_openapi(client.get("/openapi.json").json())
-        suite = generate_suite(contract, source="in-process", base_url="http://testserver")
+        suite = generate_suite(
+            contract,
+            source="in-process",
+            base_url="http://testserver",
+            allowed_methods=["GET", "POST"],
+        )
         summary = run_suite(suite, client=client)
 
     assert summary.total == len(contract.operations) * 3

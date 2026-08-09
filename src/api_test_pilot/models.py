@@ -6,7 +6,9 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
+
+SAFE_HTTP_METHODS = ("GET", "HEAD", "OPTIONS")
 
 
 class ScenarioCategory(StrEnum):
@@ -15,6 +17,55 @@ class ScenarioCategory(StrEnum):
     FUNCTIONAL = "functional"
     NEGATIVE = "negative"
     EDGE = "edge"
+
+
+class AuthenticationKind(StrEnum):
+    """Authentication mechanisms supported by the HTTP runner."""
+
+    API_KEY = "api_key"
+    HTTP_BASIC = "http_basic"
+    HTTP_BEARER = "http_bearer"
+    OAUTH2 = "oauth2"
+    OPENID_CONNECT = "openid_connect"
+
+
+class AuthenticationScheme(BaseModel):
+    """A secret-free runtime binding for one contract security scheme."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: AuthenticationKind
+    environment_variable: str
+    location: str | None = None
+    parameter_name: str | None = None
+
+
+class ExpectedResponse(BaseModel):
+    """Contract assertions for one documented HTTP response status."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status_code: int
+    media_type: str | None = None
+    response_schema: dict[str, Any] | None = None
+    headers: list[str] = Field(default_factory=list)
+
+
+class ExecutionPolicy(BaseModel):
+    """Explicit allowlist that prevents accidental mutating API requests."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    allowed_methods: list[str] = Field(default_factory=lambda: list(SAFE_HTTP_METHODS))
+
+    @field_validator("allowed_methods")
+    @classmethod
+    def normalize_methods(cls, methods: list[str]) -> list[str]:
+        """Normalize and de-duplicate configured HTTP methods."""
+        normalized = list(dict.fromkeys(method.upper() for method in methods))
+        if not normalized:
+            raise ValueError("At least one HTTP method must be allowed")
+        return normalized
 
 
 class Scenario(BaseModel):
@@ -31,6 +82,8 @@ class Scenario(BaseModel):
     query: dict[str, Any] = Field(default_factory=dict)
     body: Any | None = None
     expected_statuses: list[int]
+    expected_responses: list[ExpectedResponse] = Field(default_factory=list)
+    security: list[list[str]] = Field(default_factory=list)
     description: str
 
 
@@ -39,9 +92,11 @@ class ScenarioSuite(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: str = "1.0"
+    schema_version: str = "2.0"
     source: str
     base_url: str
+    execution: ExecutionPolicy = Field(default_factory=ExecutionPolicy)
+    authentication: dict[str, AuthenticationScheme] = Field(default_factory=dict)
     scenarios: list[Scenario]
 
 

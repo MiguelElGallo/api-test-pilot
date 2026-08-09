@@ -1,0 +1,14 @@
+# This repository deliberately opts into POST only against its disposable local fixture.
+schema_version: '1.0'
+target:
+  specification: http://127.0.0.1:8000/openapi.json
+  base_url: http://127.0.0.1:8000
+  variables: {}
+execution:
+  allowed_methods:
+  - GET
+  - POST
+authentication: {}
+artifacts:
+  suite: generated-scenarios.yaml
+  reports: reports
