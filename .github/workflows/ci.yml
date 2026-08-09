@@ -1,0 +1,104 @@
+# Validate source quality and execute generated API regressions on every relevant change.
+name: API regression
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: "17 5 * * 1"
+
+# Use least privilege; Models access powers optional failure analysis.
+permissions:
+  contents: read
+  models: read
+
+concurrency:
+  group: api-regression-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Quality gates
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9
+        with:
+          enable-cache: true
+      - name: Install Python
+        run: uv python install 3.12
+      - name: Install locked dependencies
+        run: uv sync --all-extras --locked --no-editable
+      - name: Lint
+        run: uv run --no-sync ruff check .
+      - name: Check formatting
+        run: uv run --no-sync ruff format --check .
+      - name: Type-check
+        run: uv run --no-sync ty check
+      - name: Run tests
+        run: uv run --no-sync pytest
+
+  regression:
+    name: Generated API regression
+    needs: quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9
+        with:
+          enable-cache: true
+      - name: Install Python and dependencies
+        run: |
+          uv python install 3.12
+          uv sync --all-extras --locked --no-editable
+      - name: Start deterministic example API
+        run: |
+          uv run --no-sync uvicorn api_test_pilot.example_api:app --host 127.0.0.1 --port 8000 &
+          for _ in {1..30}; do
+            curl --fail --silent http://127.0.0.1:8000/health && break
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:8000/health
+      - name: Generate functional, negative, and edge scenarios
+        run: |
+          uv run --no-sync api-test-pilot generate \
+            --spec http://127.0.0.1:8000/openapi.json \
+            --base-url http://127.0.0.1:8000 \
+            --output generated-scenarios.yaml
+      - name: Execute regression with AI failure analysis
+        id: regression
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          uv run --no-sync api-test-pilot run --suite generated-scenarios.yaml
+          --report-dir reports --ai-analysis
+      - name: Upload generated scenarios and reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: api-regression-report
+          path: |
+            generated-scenarios.yaml
+            reports/
+          if-no-files-found: error
+      - name: Notify configured Slack or email channels
+        if: always() && hashFiles('reports/report.json') != ''
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+        run: uv run --no-sync api-test-pilot notify --report reports/report.json
+      - name: Preserve regression outcome
+        if: steps.regression.outcome == 'failure'
+        run: exit 1

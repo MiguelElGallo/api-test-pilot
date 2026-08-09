@@ -1,0 +1,15 @@
+{
+  "info": {
+    "name": "Postman Echo Smoke",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Echo GET",
+      "request": {
+        "method": "GET",
+        "url": "https://postman-echo.com/get?source=api-test-pilot"
+      }
+    }
+  ]
+}

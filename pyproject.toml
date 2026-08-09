@@ -1,0 +1,65 @@
+[build-system]
+requires = ["uv_build>=0.12.1,<0.13.0"]
+build-backend = "uv_build"
+
+[project]
+name = "api-test-pilot"
+version = "0.1.0"
+description = "Contract-driven API scenario generation, execution, and AI-assisted failure analysis."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "Miguel Peredo" }]
+dependencies = [
+  "httpx>=0.28.1,<1",
+  "pydantic>=2.11,<3",
+  "pyyaml>=6.0.2,<7",
+  "typer>=0.16,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "fastapi>=0.116,<1",
+  "pytest>=8.4,<9",
+  "pytest-cov>=6.2,<8",
+  "ruff>=0.12,<1",
+  "ty>=0.0.1a16",
+  "uvicorn>=0.35,<1",
+]
+
+[project.scripts]
+api-test-pilot = "api_test_pilot.cli:app"
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers --cov=api_test_pilot --cov-report=term-missing --cov-fail-under=85"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+  "ANN401",
+  "C901",
+  "COM812",
+  "CPY001",
+  "D203",
+  "D213",
+  "EM101",
+  "EM102",
+  "FBT002",
+  "PLR0911",
+  "PLR0913",
+  "PLR2004",
+  "TC001",
+  "TC003",
+  "TRY003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101"]
+
+[tool.ty.environment]
+python-version = "3.12"

@@ -1,0 +1,26 @@
+# Python build and cache artifacts.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+.venv/
+
+# Generated test and report artifacts.
+reports/*
+!reports/.gitkeep
+generated-scenarios.yaml
+
+# Local configuration and secrets.
+.env
+.env.*
+!.env.example
+
+# Local editor and operating-system files.
+.DS_Store
+.idea/
+.vscode/

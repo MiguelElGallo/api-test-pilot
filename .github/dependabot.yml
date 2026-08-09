@@ -1,0 +1,11 @@
+# Keep Python packages and GitHub Actions current through reviewed pull requests.
+version: 2
+updates:
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
