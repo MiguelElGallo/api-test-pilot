@@ -71,6 +71,17 @@ jobs:
             --spec http://127.0.0.1:8000/openapi.json \
             --base-url http://127.0.0.1:8000 \
             --output generated-scenarios.yaml
+      - name: Generate AI-assisted test recommendations
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p reports
+          uv run --no-sync api-test-pilot generate \
+            --spec http://127.0.0.1:8000/openapi.json \
+            --base-url http://127.0.0.1:8000 \
+            --output generated-scenarios.yaml \
+            --ai | tee reports/ai-generation-advice.txt
       - name: Execute regression with AI failure analysis
         id: regression
         continue-on-error: true

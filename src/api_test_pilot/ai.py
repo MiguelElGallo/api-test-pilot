@@ -12,7 +12,7 @@ import httpx
 from api_test_pilot.models import RunSummary
 from api_test_pilot.runner import failure_payload
 
-_DEFAULT_MODEL = "openai/gpt-4.1-mini"
+_DEFAULT_MODEL = "openai/gpt-4.1"
 _DEFAULT_ENDPOINT = "https://models.github.ai/inference/chat/completions"
 
 

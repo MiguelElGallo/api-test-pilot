@@ -59,7 +59,8 @@ GITHUB_TOKEN="..." uv run --no-sync api-test-pilot run --suite generated-scenari
 
 Deterministic generation never depends on AI. Generation advice is printed separately, while
 failure analysis is embedded in the HTML and JSON reports. Request headers and bodies are not sent
-to the model.
+to the model. Scheduled and manually dispatched workflows save generation advice as
+`reports/ai-generation-advice.txt`; push and pull-request runs avoid consuming generation quota.
 
 ## Notifications
 
