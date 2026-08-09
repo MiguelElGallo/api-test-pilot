@@ -1,5 +1,11 @@
 # API Test Pilot
 
+[![API regression](https://github.com/MiguelElGallo/api-test-pilot/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/MiguelElGallo/api-test-pilot/actions/workflows/ci.yml)
+[![Documentation](https://github.com/MiguelElGallo/api-test-pilot/actions/workflows/docs.yml/badge.svg?branch=main)](https://github.com/MiguelElGallo/api-test-pilot/actions/workflows/docs.yml)
+[![GitHub release](https://img.shields.io/github/v/release/MiguelElGallo/api-test-pilot?display_name=tag&sort=semver)](https://github.com/MiguelElGallo/api-test-pilot/releases/latest)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f.svg)](LICENSE)
+
 API Test Pilot turns one OpenAPI, Swagger, or supported Postman specification into the same
 executable regression suite locally and in GitHub Actions. It generates functional, negative, and
 schema-boundary scenarios; validates response contracts; produces JSON, JUnit XML, and HTML
@@ -11,7 +17,7 @@ email recipients.
 
 ## Initialize a target
 
-Prerequisites are Python 3.12+ and [uv](https://docs.astral.sh/uv/). Clone this private repository,
+Prerequisites are Python 3.12+ and [uv](https://docs.astral.sh/uv/). Clone this public repository,
 install the locked environment, and point `init` at a local file or HTTPS specification:
 
 ```bash
