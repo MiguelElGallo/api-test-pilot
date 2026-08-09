@@ -64,3 +64,8 @@ ignore = [
 
 [tool.ty.environment]
 python-version = "3.12"
+
+[dependency-groups]
+docs = [
+    "zensical>=0.0.20,<1",
+]

@@ -74,6 +74,21 @@ def test_default_policy_excludes_mutating_operations(openapi_document: dict[str,
     assert {scenario.method for scenario in suite.scenarios} == {"GET"}
 
 
+def test_negative_fallback_describes_unknown_resource() -> None:
+    """An operation with no required input should explain its unknown-path check."""
+    contract = parse_openapi(
+        {
+            "openapi": "3.1.0",
+            "servers": [{"url": "https://api.example.test"}],
+            "paths": {"/health": {"get": {"responses": {"200": {"description": "ok"}}}}},
+        }
+    )
+
+    suite = generate_suite(contract, source="fixture")
+
+    assert "unknown resource" in suite.scenarios[1].description
+
+
 def test_edge_request_body_uses_schema_boundaries(openapi_document: dict[str, Any]) -> None:
     """Body-centric edge cases should differ from the functional example."""
     item_schema = openapi_document["components"]["schemas"]["Item"]
