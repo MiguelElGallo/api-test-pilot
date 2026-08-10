@@ -182,6 +182,184 @@ def test_postman_resolves_variables_auth_headers_and_examples() -> None:
     assert contract.security_schemes[0].environment_hint == "token"
 
 
+def test_postman_rejects_mixed_absolute_origins() -> None:
+    """Collections must not rewrite a request onto the first collection origin."""
+    document = {
+        "item": [
+            {"name": "One", "request": {"method": "GET", "url": "https://one.example.test/a"}},
+            {"name": "Two", "request": {"method": "GET", "url": "https://two.example.test/b"}},
+        ]
+    }
+
+    with pytest.raises(PostmanFeatureError, match="mixed request origins"):
+        parse_postman(document)
+
+
+def test_postman_canonicalizes_default_ports_before_comparing_origins() -> None:
+    """Explicit default ports should not make otherwise identical origins look mixed."""
+    contract = parse_postman(
+        {
+            "item": [
+                {
+                    "name": "Implicit port",
+                    "request": {"method": "GET", "url": "https://api.example.test/one"},
+                },
+                {
+                    "name": "Explicit port",
+                    "request": {"method": "GET", "url": "https://api.example.test:443/two"},
+                },
+            ]
+        }
+    )
+
+    assert contract.base_url == "https://api.example.test"
+    assert [operation.path for operation in contract.operations] == ["/one", "/two"]
+
+
+@pytest.mark.parametrize(
+    ("url", "message"),
+    [
+        ("ftp://api.example.test/items", "must use http or https"),
+        ("https://user:secret@api.example.test/items", "must not embed credentials"),
+    ],
+)
+def test_postman_rejects_unsafe_absolute_urls(url: str, message: str) -> None:
+    """Only credential-free HTTP origins may become a suite base URL."""
+    document = {"item": [{"name": "Unsafe", "request": {"method": "GET", "url": url}}]}
+
+    with pytest.raises(PostmanFeatureError, match=message):
+        parse_postman(document)
+
+
+def test_postman_rejects_non_default_port_as_a_mixed_origin() -> None:
+    """A non-default port is a distinct network origin and must not be rewritten."""
+    document = {
+        "item": [
+            {"name": "Default", "request": {"method": "GET", "url": "https://api.example.test/a"}},
+            {
+                "name": "Non-default",
+                "request": {"method": "GET", "url": "https://api.example.test:8443/b"},
+            },
+        ]
+    }
+
+    with pytest.raises(PostmanFeatureError, match="mixed request origins"):
+        parse_postman(document)
+
+
+def test_openapi_rejects_request_features_the_runner_cannot_preserve() -> None:
+    """Unsupported request encodings and parameter locations must fail at parsing time."""
+    xml_request = {
+        "openapi": "3.1.0",
+        "paths": {
+            "/items": {
+                "post": {
+                    "requestBody": {"content": {"application/xml": {"schema": {"type": "string"}}}},
+                    "responses": {"200": {"description": "ok"}},
+                }
+            }
+        },
+    }
+    swagger_form = {
+        "swagger": "2.0",
+        "paths": {
+            "/items": {
+                "post": {
+                    "parameters": [{"name": "name", "in": "formData", "type": "string"}],
+                    "responses": {"200": {"description": "ok"}},
+                }
+            }
+        },
+    }
+    cookie_parameter = {
+        "openapi": "3.1.0",
+        "paths": {
+            "/items": {
+                "get": {
+                    "parameters": [
+                        {"name": "session", "in": "cookie", "schema": {"type": "string"}}
+                    ],
+                    "responses": {"200": {"description": "ok"}},
+                }
+            }
+        },
+    }
+
+    with pytest.raises(ValueError, match="application/json"):
+        parse_openapi(xml_request)
+    with pytest.raises(ValueError, match="formData"):
+        parse_openapi(swagger_form)
+    with pytest.raises(ValueError, match="cookie"):
+        parse_openapi(cookie_parameter)
+
+
+def test_openapi_rejects_external_request_schema_references() -> None:
+    """Request schemas must be self-contained because generation never fetches references."""
+    document = {
+        "openapi": "3.1.0",
+        "paths": {
+            "/items": {
+                "post": {
+                    "requestBody": {
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "https://schemas.example.test/item.json"}
+                            }
+                        }
+                    },
+                    "responses": {"200": {"description": "ok"}},
+                }
+            }
+        },
+    }
+
+    with pytest.raises(ValueError, match=r"External \$ref.*bundle"):
+        parse_openapi(document)
+
+
+def test_openapi_rejects_external_parameter_schema_references() -> None:
+    """Parameter schemas must be self-contained before candidate generation starts."""
+    document = {
+        "openapi": "3.1.0",
+        "paths": {
+            "/items": {
+                "get": {
+                    "parameters": [
+                        {
+                            "name": "filter",
+                            "in": "query",
+                            "schema": {"$ref": "https://schemas.example.test/filter.json"},
+                        }
+                    ],
+                    "responses": {"200": {"description": "ok"}},
+                }
+            }
+        },
+    }
+
+    with pytest.raises(ValueError, match=r"External \$ref.*bundle"):
+        parse_openapi(document)
+
+
+def test_swagger_rejects_non_json_body_media_type() -> None:
+    """Swagger body requests must use JSON because the runner serializes JSON only."""
+    document = {
+        "swagger": "2.0",
+        "consumes": ["application/xml"],
+        "paths": {
+            "/items": {
+                "post": {
+                    "parameters": [{"name": "item", "in": "body", "schema": {"type": "object"}}],
+                    "responses": {"200": {"description": "ok"}},
+                }
+            }
+        },
+    }
+
+    with pytest.raises(ValueError, match="application/json"):
+        parse_openapi(document)
+
+
 @pytest.mark.parametrize(
     ("document", "message"),
     [
@@ -225,6 +403,34 @@ def test_postman_resolves_variables_auth_headers_and_examples() -> None:
                 ]
             },
             "raw request bodies must contain valid JSON",
+        ),
+        (
+            {
+                "auth": {"type": "custom-auth"},
+                "item": [
+                    {
+                        "name": "Unknown auth",
+                        "request": {"method": "GET", "url": "https://api.example.test/x"},
+                    }
+                ],
+            },
+            "authentication type 'custom-auth' is not supported",
+        ),
+        (
+            {
+                "item": [
+                    {
+                        "name": "Wrong content type",
+                        "request": {
+                            "method": "POST",
+                            "url": "https://api.example.test/x",
+                            "header": [{"key": "Content-Type", "value": "text/plain"}],
+                            "body": {"mode": "raw", "raw": '{"name":"probe"}'},
+                        },
+                    }
+                ]
+            },
+            "require an application/json Content-Type",
         ),
     ],
 )

@@ -9,6 +9,7 @@ from typing import Any
 from urllib.parse import parse_qsl, urlparse
 
 from api_test_pilot.models import AuthenticationKind
+from api_test_pilot.schema import external_schema_references, merged_all_of_object_schema
 
 
 class PostmanFeatureError(ValueError):
@@ -76,6 +77,7 @@ class Contract:
 
 _HTTP_METHODS = {"get", "post", "put", "patch", "delete", "head", "options"}
 _VARIABLE_PATTERN = re.compile(r"{{\s*([^{}]+?)\s*}}")
+_TRANSPORTED_PARAMETER_LOCATIONS = {"path", "query", "header"}
 
 
 def _resolve_ref(document: dict[str, Any], value: Any) -> Any:
@@ -91,6 +93,35 @@ def _resolve_ref(document: dict[str, Any], value: Any) -> Any:
             return value
         current = current.get(part.replace("~1", "/").replace("~0", "~"))
     return current if current is not None else value
+
+
+def _uses_legacy_exclusive_bounds(document: dict[str, Any]) -> bool:
+    """Return whether a contract uses the Swagger/OpenAPI 3.0 boolean bound syntax."""
+    if "swagger" in document:
+        return True
+    return str(document.get("openapi", "")).startswith("3.0")
+
+
+def _normalize_legacy_exclusive_bounds(document: dict[str, Any], schema: dict[str, Any]) -> None:
+    """Translate boolean exclusive bounds into the numeric JSON Schema form."""
+    if not _uses_legacy_exclusive_bounds(document):
+        return
+    for inclusive_name, exclusive_name in (
+        ("minimum", "exclusiveMinimum"),
+        ("maximum", "exclusiveMaximum"),
+    ):
+        exclusive = schema.get(exclusive_name)
+        if not isinstance(exclusive, bool):
+            continue
+        schema.pop(exclusive_name)
+        if not exclusive:
+            continue
+        boundary = schema.pop(inclusive_name, None)
+        if not isinstance(boundary, (int, float)) or isinstance(boundary, bool):
+            raise TypeError(
+                f"Legacy {exclusive_name}=true requires a numeric {inclusive_name} value"
+            )
+        schema[exclusive_name] = boundary
 
 
 def _dereference_schema(
@@ -120,6 +151,7 @@ def _dereference_schema(
             expanded["type"] = [schema_type, "null"]
         elif "anyOf" in expanded:
             expanded["anyOf"].append({"type": "null"})
+    _normalize_legacy_exclusive_bounds(document, expanded)
     return expanded
 
 
@@ -140,6 +172,12 @@ def _schema_example(  # noqa: PLR0912 - JSON Schema types require distinct strat
     choices = schema.get("enum")
     if isinstance(choices, list) and choices:
         return choices[0]
+    merged_schema = merged_all_of_object_schema(schema)
+    if merged_schema is not None:
+        return _schema_example(merged_schema, document)
+    all_of = schema.get("allOf")
+    if isinstance(all_of, list) and all_of:
+        return _schema_example(all_of[0], document)
     for composition in ("oneOf", "anyOf"):
         branches = schema.get(composition)
         if isinstance(branches, list) and branches:
@@ -154,7 +192,12 @@ def _schema_example(  # noqa: PLR0912 - JSON Schema types require distinct strat
             if name in required or "example" in value or "examples" in value or "default" in value
         }
     if schema_type == "array":
-        return [_schema_example(schema.get("items", {}), document)]
+        minimum = max(int(schema.get("minItems", 1)), 0)
+        maximum = schema.get("maxItems")
+        count = int(maximum) if isinstance(maximum, int) and minimum > maximum else minimum
+        if count == 0 and maximum != 0:
+            count = 1
+        return [_schema_example(schema.get("items", {}), document) for _ in range(min(count, 20))]
     if schema_type == "integer":
         return int(schema.get("minimum", 1))
     if schema_type == "number":
@@ -163,7 +206,10 @@ def _schema_example(  # noqa: PLR0912 - JSON Schema types require distinct strat
         return True
     if schema.get("format") == "email":
         return "test@example.com"
-    return "x" * int(schema.get("minLength", 1))
+    minimum = max(int(schema.get("minLength", 1)), 0)
+    maximum = schema.get("maxLength")
+    length = int(maximum) if isinstance(maximum, int) and minimum > maximum else minimum
+    return "x" * min(length, 256)
 
 
 def _server_url(document: dict[str, Any]) -> str:
@@ -271,11 +317,19 @@ def _request_contract(
     """Extract an OpenAPI 2 or 3 JSON request body contract."""
     request_body = _resolve_ref(document, operation.get("requestBody", {}))
     if isinstance(request_body, dict) and request_body:
+        _reject_external_request_references(request_body)
         content = request_body.get("content", {})
-        media = content.get("application/json", next(iter(content.values()), {}))
+        if not isinstance(content, dict) or "application/json" not in content:
+            media_types = ", ".join(sorted(str(media_type) for media_type in content))
+            raise ValueError(
+                "Unsupported OpenAPI request body media type(s): "
+                f"{media_types or '<none>'}; only application/json is supported"
+            )
+        media = content["application/json"]
         request_schema = (
             _dereference_schema(document, media.get("schema")) if isinstance(media, dict) else None
         )
+        _reject_external_request_references(request_schema)
         request_example = media.get("example") if isinstance(media, dict) else None
         if request_example is None and isinstance(media, dict):
             examples = media.get("examples")
@@ -288,10 +342,78 @@ def _request_contract(
         return request_schema, request_example, bool(request_body.get("required", False))
     for raw_parameter in raw_parameters:
         parameter = _resolve_ref(document, raw_parameter)
+        if isinstance(parameter, dict) and parameter.get("in") == "formData":
+            raise ValueError(
+                "Swagger formData parameters are not supported; use an application/json body"
+            )
         if isinstance(parameter, dict) and parameter.get("in") == "body":
+            consumes = operation.get("consumes", document.get("consumes", ["application/json"]))
+            if not isinstance(consumes, list) or "application/json" not in consumes:
+                media_types = ", ".join(str(media_type) for media_type in consumes)
+                raise ValueError(
+                    "Unsupported Swagger request body media type(s): "
+                    f"{media_types or '<none>'}; only application/json is supported"
+                )
             schema = _dereference_schema(document, parameter.get("schema", {}))
+            _reject_external_request_references(schema)
             return schema, _schema_example(schema, document), bool(parameter.get("required", False))
     return None, None, False
+
+
+def _reject_external_request_references(schema: Any) -> None:
+    """Reject request schemas that would require an unbundled external document."""
+    if external_schema_references(schema):
+        raise ValueError(
+            "External $ref values are not supported in request schemas; bundle referenced "
+            "schemas into the specification and use local #/ references"
+        )
+
+
+def _request_parameters(
+    document: dict[str, Any], raw_parameters: list[Any]
+) -> tuple[Parameter, ...]:
+    """Normalize parameters that the runner can transmit without changing semantics."""
+    parameters: list[Parameter] = []
+    for raw_parameter in raw_parameters:
+        parameter = _resolve_ref(document, raw_parameter)
+        if not isinstance(parameter, dict):
+            continue
+        location = str(parameter.get("in", "query"))
+        if location == "body":
+            continue
+        if location not in _TRANSPORTED_PARAMETER_LOCATIONS:
+            raise ValueError(
+                f"Unsupported OpenAPI parameter location '{location}'; "
+                "only path, query, and header parameters are supported"
+            )
+        parameters.append(
+            Parameter(
+                name=str(parameter.get("name", "parameter")),
+                location=location,
+                required=bool(parameter.get("required", False)),
+                schema=_parameter_schema(document, parameter),
+                example=parameter.get("example", parameter.get("schema", {}).get("example")),
+            )
+        )
+    return tuple(parameters)
+
+
+def _parameter_schema(document: dict[str, Any], parameter: dict[str, Any]) -> dict[str, Any]:
+    """Return a JSON Schema from an OpenAPI parameter without parameter-only keywords."""
+    raw_schema = parameter.get("schema")
+    if isinstance(raw_schema, dict):
+        schema = raw_schema
+    else:
+        schema = {
+            key: value
+            for key, value in parameter.items()
+            if key not in {"name", "in", "required", "collectionFormat", "allowEmptyValue"}
+        }
+    normalized = _dereference_schema(document, schema)
+    if isinstance(normalized, dict):
+        _reject_external_request_references(normalized)
+        return normalized
+    return {}
 
 
 def parse_openapi(document: dict[str, Any]) -> Contract:
@@ -306,20 +428,7 @@ def parse_openapi(document: dict[str, Any]) -> Contract:
             if method.lower() not in _HTTP_METHODS or not isinstance(operation, dict):
                 continue
             raw_parameters = [*common_parameters, *operation.get("parameters", [])]
-            parameters = tuple(
-                Parameter(
-                    name=str(parameter.get("name", "parameter")),
-                    location=str(parameter.get("in", "query")),
-                    required=bool(parameter.get("required", False)),
-                    schema=_dereference_schema(
-                        document, parameter.get("schema", parameter.get("items", parameter))
-                    ),
-                    example=parameter.get("example", parameter.get("schema", {}).get("example")),
-                )
-                for raw_parameter in raw_parameters
-                if isinstance((parameter := _resolve_ref(document, raw_parameter)), dict)
-                and parameter.get("in") != "body"
-            )
+            parameters = _request_parameters(document, raw_parameters)
             request_schema, request_example, request_required = _request_contract(
                 document, operation, raw_parameters
             )
@@ -437,7 +546,7 @@ def _postman_security_scheme(name: str, raw_auth: Any) -> SecurityScheme | None:
             parameter_name=values.get("key", "X-API-Key"),
             environment_hint=hint,
         )
-    if auth_type in {"oauth2", "oauth1", "digest", "hawk", "ntlm", "awsv4"}:
+    if auth_type:
         raise PostmanFeatureError(f"Postman authentication type '{auth_type}' is not supported")
     return None
 
@@ -446,6 +555,28 @@ def _variable_name(value: str) -> str | None:
     """Return the variable name when an auth value is one Postman placeholder."""
     match = _VARIABLE_PATTERN.fullmatch(value.strip())
     return match.group(1) if match else None
+
+
+def _postman_origin(parsed: Any) -> str:
+    """Return a credential-free canonical HTTP origin for a Postman request URL."""
+    scheme = parsed.scheme.lower()
+    if scheme not in {"http", "https"}:
+        raise PostmanFeatureError("Postman absolute request URLs must use http or https")
+    if parsed.username is not None or parsed.password is not None:
+        raise PostmanFeatureError(
+            "Postman request URLs must not embed credentials; use environment authentication"
+        )
+    if parsed.hostname is None:
+        raise PostmanFeatureError("Postman absolute request URLs must include a host")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise PostmanFeatureError("Postman absolute request URLs must use a valid port") from exc
+    host = parsed.hostname.lower()
+    rendered_host = f"[{host}]" if ":" in host else host
+    default_port = 443 if scheme == "https" else 80
+    port_suffix = "" if port is None or port == default_port else f":{port}"
+    return f"{scheme}://{rendered_host}{port_suffix}"
 
 
 def _postman_headers(request: dict[str, Any], variables: dict[str, str]) -> tuple[Parameter, ...]:
@@ -462,6 +593,23 @@ def _postman_headers(request: dict[str, Any], variables: dict[str, str]) -> tupl
         and not header.get("disabled", False)
         and str(header.get("key", "")).lower() != "authorization"
     )
+
+
+def _reject_non_json_postman_content_type(
+    request: dict[str, Any], variables: dict[str, str]
+) -> None:
+    """Reject a raw JSON body when its explicit header claims a different encoding."""
+    content_types = [
+        _interpolate_postman(str(header.get("value", "")), variables)
+        for header in request.get("header", [])
+        if isinstance(header, dict)
+        and not header.get("disabled", False)
+        and str(header.get("key", "")).lower() == "content-type"
+    ]
+    if any(value.split(";", 1)[0].strip().lower() != "application/json" for value in content_types):
+        raise PostmanFeatureError(
+            "Postman raw JSON request bodies require an application/json Content-Type header"
+        )
 
 
 def _has_authorization_header(request: dict[str, Any]) -> bool:
@@ -521,8 +669,14 @@ def parse_postman(document: dict[str, Any], *, variables: dict[str, str] | None 
         if isinstance(raw_url, dict):
             raw_url = raw_url.get("raw", "")
         parsed = urlparse(_interpolate_postman(str(raw_url), resolved_variables))
-        if parsed.netloc and not base_url:
-            base_url = f"{parsed.scheme}://{parsed.netloc}"
+        if parsed.scheme or parsed.netloc:
+            origin = _postman_origin(parsed)
+            if base_url and origin != base_url:
+                raise PostmanFeatureError(
+                    "Postman collections with mixed request origins are not supported; "
+                    "split the collection or use one shared origin"
+                )
+            base_url = origin
         path = parsed.path or "/"
         query = tuple(
             Parameter(name=key, location="query", required=False, example=value)
@@ -536,6 +690,7 @@ def parse_postman(document: dict[str, Any], *, variables: dict[str, str] | None 
         raw_body = body.get("raw") if isinstance(body, dict) else None
         body_example: Any | None = None
         if raw_body is not None:
+            _reject_non_json_postman_content_type(request, resolved_variables)
             interpolated_body = _interpolate_postman(str(raw_body), resolved_variables)
             try:
                 body_example = json.loads(interpolated_body)

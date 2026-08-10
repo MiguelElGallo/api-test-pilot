@@ -27,6 +27,9 @@ uv run --no-sync api-test-pilot init \
 
 JSON and YAML files are both supported.
 
+If the local file has a relative server URL, for example `/api/v1`, `--base-url` is required. A
+relative URL has no host on its own, so the tool cannot safely guess where to send requests.
+
 ## Supply a Postman variable
 
 Pass each non-secret variable as `NAME=VALUE`:
@@ -41,6 +44,10 @@ uv run --no-sync api-test-pilot init \
 
 Do not pass tokens or passwords through `--variable`; these values are saved in the project
 configuration. Use [authentication environment variables](add-authentication.md) for secrets.
+
+Postman requests with absolute URLs must all use the same origin. To run a collection against one
+test environment, set `--base-url`; collections that mix origins are rejected instead of having
+their requests silently redirected.
 
 ## Regenerate after an API change
 

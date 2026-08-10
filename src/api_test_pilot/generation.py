@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import ParseResult, urljoin, urlparse
+
+from jsonschema import SchemaError
+from jsonschema.validators import validator_for
 
 from api_test_pilot.contracts import Contract, Operation, Parameter, ResponseContract
 from api_test_pilot.models import (
@@ -18,6 +22,7 @@ from api_test_pilot.models import (
     ScenarioCategory,
     ScenarioSuite,
 )
+from api_test_pilot.schema import merged_all_of_object_schema
 
 
 def _safe_identifier(value: str) -> str:
@@ -41,10 +46,22 @@ def _parameter_value(parameter: Parameter, *, edge: bool = False) -> Any:
         return choices[-1] if edge else choices[0]
     schema_type = schema.get("type", "string")
     if schema_type == "integer":
+        exclusive_minimum = _numeric_exclusive_bound(schema, "exclusiveMinimum")
+        exclusive_maximum = _numeric_exclusive_bound(schema, "exclusiveMaximum")
+        if edge and exclusive_maximum is not None:
+            return int(exclusive_maximum) - 1
         key = "maximum" if edge else "minimum"
+        if not edge and exclusive_minimum is not None:
+            return int(exclusive_minimum) + 1
         return int(schema.get(key, 2**31 - 1 if edge else 1))
     if schema_type == "number":
+        exclusive_minimum = _numeric_exclusive_bound(schema, "exclusiveMinimum")
+        exclusive_maximum = _numeric_exclusive_bound(schema, "exclusiveMaximum")
+        if edge and exclusive_maximum is not None:
+            return math.nextafter(float(exclusive_maximum), -math.inf)
         key = "maximum" if edge else "minimum"
+        if not edge and exclusive_minimum is not None:
+            return math.nextafter(float(exclusive_minimum), math.inf)
         return float(schema.get(key, 1e6 if edge else 1.0))
     if schema_type == "boolean":
         return not edge
@@ -55,7 +72,15 @@ def _parameter_value(parameter: Parameter, *, edge: bool = False) -> Any:
     return "x" * min(max(length, 1), 256)
 
 
-def _schema_value(  # noqa: PLR0912 - each JSON Schema type has a distinct boundary strategy.
+def _numeric_exclusive_bound(schema: dict[str, Any], name: str) -> int | float | None:
+    """Return a numeric exclusive bound while excluding legacy boolean syntax."""
+    value = schema.get(name)
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return value
+    return None
+
+
+def _schema_value(  # noqa: PLR0912, PLR0915 - each JSON Schema type has a distinct strategy.
     schema: dict[str, Any], *, edge: bool
 ) -> Any:
     """Generate a valid representative or boundary value from a dereferenced schema."""
@@ -72,6 +97,12 @@ def _schema_value(  # noqa: PLR0912 - each JSON Schema type has a distinct bound
     choices = schema.get("enum")
     if isinstance(choices, list) and choices:
         return deepcopy(choices[-1] if edge else choices[0])
+    merged_schema = merged_all_of_object_schema(schema)
+    if merged_schema is not None:
+        return _schema_value(merged_schema, edge=edge)
+    all_of = schema.get("allOf")
+    if isinstance(all_of, list) and all_of:
+        return _schema_value(all_of[-1] if edge else all_of[0], edge=edge)
     for composition in ("oneOf", "anyOf"):
         branches = schema.get(composition)
         if isinstance(branches, list) and branches:
@@ -97,23 +128,37 @@ def _schema_value(  # noqa: PLR0912 - each JSON Schema type has a distinct bound
         )
         return {name: _schema_value(value, edge=edge) for name, value in selected.items()}
     if schema_type == "array":
-        lower = int(schema.get("minItems", 1))
-        upper = int(schema.get("maxItems", max(lower, 5)))
-        count = min(upper if edge else lower, 20)
+        lower = max(int(schema.get("minItems", 1)), 0)
+        maximum = schema.get("maxItems")
+        upper = int(maximum) if isinstance(maximum, int) else max(lower, 5)
+        count = upper if edge else lower
+        if lower > upper:
+            count = upper
+        if count == 0 and maximum != 0:
+            count = 1
+        count = min(max(count, 0), 20)
         return [_schema_value(schema.get("items", {}), edge=edge) for _ in range(count)]
     if schema_type == "integer":
+        exclusive_minimum = _numeric_exclusive_bound(schema, "exclusiveMinimum")
+        exclusive_maximum = _numeric_exclusive_bound(schema, "exclusiveMaximum")
+        if edge and exclusive_maximum is not None:
+            return int(exclusive_maximum) - 1
         if edge and "maximum" in schema:
             return int(schema["maximum"])
-        if edge and "exclusiveMaximum" in schema:
-            return int(schema["exclusiveMaximum"]) - 1
+        if exclusive_minimum is not None:
+            return int(exclusive_minimum) + 1
         if "minimum" in schema:
             return int(schema["minimum"])
         return 2**31 - 1 if edge else 1
     if schema_type == "number":
+        exclusive_minimum = _numeric_exclusive_bound(schema, "exclusiveMinimum")
+        exclusive_maximum = _numeric_exclusive_bound(schema, "exclusiveMaximum")
+        if edge and exclusive_maximum is not None:
+            return math.nextafter(float(exclusive_maximum), -math.inf)
         if edge and "maximum" in schema:
             return float(schema["maximum"])
-        if edge and "exclusiveMaximum" in schema:
-            return float(schema["exclusiveMaximum"]) - 0.01
+        if exclusive_minimum is not None:
+            return math.nextafter(float(exclusive_minimum), math.inf)
         if "minimum" in schema:
             return float(schema["minimum"])
         return 1e6 if edge else 1.0
@@ -123,9 +168,12 @@ def _schema_value(  # noqa: PLR0912 - each JSON Schema type has a distinct bound
         return None
     if schema.get("format") == "email":
         return "boundary@example.com" if edge else "test@example.com"
-    length_key = "maxLength" if edge else "minLength"
-    length = int(schema.get(length_key, 128 if edge else 1))
-    return "x" * min(max(length, 1), 256)
+    minimum = max(int(schema.get("minLength", 1)), 0)
+    maximum = schema.get("maxLength")
+    length = int(maximum) if edge and isinstance(maximum, int) else (128 if edge else minimum)
+    if isinstance(maximum, int) and minimum > maximum:
+        length = maximum
+    return "x" * min(max(length, 0), 256)
 
 
 def _invalid_parameter_value(parameter: Parameter) -> Any:
@@ -243,6 +291,66 @@ def _scenario(
     )
 
 
+def _validate_request_body(operation: Operation, scenario: Scenario) -> None:
+    """Fail generation when a positive scenario cannot satisfy its JSON Schema."""
+    if operation.request_schema is None or scenario.body is None:
+        return
+    validator_type = validator_for(operation.request_schema)
+    try:
+        validator_type.check_schema(operation.request_schema)
+    except SchemaError as exc:
+        raise ValueError(
+            f"Invalid request schema for operation '{operation.identifier}': {exc.message}"
+        ) from exc
+    errors = sorted(
+        validator_type(operation.request_schema).iter_errors(scenario.body),
+        key=lambda error: list(error.path),
+    )
+    if errors:
+        first = errors[0]
+        location = "/".join(str(part) for part in first.path) or "<root>"
+        raise ValueError(
+            f"Generated {scenario.category.value} request body for operation "
+            f"'{operation.identifier}' does not satisfy its schema at {location}: {first.message}"
+        )
+
+
+def _validate_positive_parameters(operation: Operation, scenario: Scenario) -> None:
+    """Fail generation when a positive parameter candidate violates its schema."""
+    edge = scenario.category == ScenarioCategory.EDGE
+    for parameter in operation.parameters:
+        validator_type = validator_for(parameter.schema)
+        try:
+            validator_type.check_schema(parameter.schema)
+        except SchemaError as exc:
+            raise ValueError(
+                f"Invalid schema for {parameter.location} parameter "
+                f"'{parameter.name}' in operation "
+                f"'{operation.identifier}': {exc.message}"
+            ) from exc
+        value = _parameter_value(parameter, edge=edge)
+        errors = sorted(
+            validator_type(parameter.schema).iter_errors(value),
+            key=lambda error: list(error.path),
+        )
+        if errors:
+            first = errors[0]
+            location = "/".join(str(part) for part in first.path) or "<root>"
+            raise ValueError(
+                f"Generated {scenario.category.value} {parameter.location} parameter "
+                f"'{parameter.name}' for operation '{operation.identifier}' does not satisfy "
+                f"its schema at {location}: {first.message}"
+            )
+
+
+def _parse_base_url(value: str) -> ParseResult:
+    """Parse a base URL while converting parser errors into configuration guidance."""
+    try:
+        return urlparse(value)
+    except ValueError as exc:
+        raise ValueError("Invalid base URL; provide an absolute HTTP URL") from exc
+
+
 def _description(
     category: ScenarioCategory,
     *,
@@ -327,23 +435,46 @@ def generate_suite(
         )
     scenarios: list[Scenario] = []
     for operation in operations:
-        scenarios.extend(
-            [
-                _scenario(operation, ScenarioCategory.FUNCTIONAL, "happy-path"),
-                _negative_scenario(operation),
-                _scenario(
-                    operation,
-                    ScenarioCategory.EDGE,
-                    "boundary-values",
-                    edge=True,
-                ),
-            ]
-        )
+        generated = [
+            _scenario(operation, ScenarioCategory.FUNCTIONAL, "happy-path"),
+            _negative_scenario(operation),
+            _scenario(
+                operation,
+                ScenarioCategory.EDGE,
+                "boundary-values",
+                edge=True,
+            ),
+        ]
+        for scenario in generated:
+            if scenario.category in {ScenarioCategory.FUNCTIONAL, ScenarioCategory.EDGE}:
+                _validate_positive_parameters(operation, scenario)
+                _validate_request_body(operation, scenario)
+        scenarios.extend(generated)
     chosen_base_url = base_url or contract.base_url
     if not chosen_base_url:
         raise ValueError("A base URL is required when the contract does not define one")
-    if not urlparse(chosen_base_url).scheme and urlparse(source).scheme in {"http", "https"}:
+    if not _parse_base_url(chosen_base_url).scheme and urlparse(source).scheme in {"http", "https"}:
         chosen_base_url = urljoin(source, chosen_base_url)
+    parsed_base_url = _parse_base_url(chosen_base_url)
+    if parsed_base_url.scheme in {"http", "https"} and not parsed_base_url.netloc:
+        raise ValueError("Invalid base URL; provide an absolute HTTP URL with a host")
+    if parsed_base_url.scheme not in {"http", "https"}:
+        raise ValueError(
+            "The contract server URL is relative; provide an absolute --base-url when generating "
+            "from a local specification"
+        )
+    if parsed_base_url.hostname is None:
+        raise ValueError("Invalid base URL; provide an absolute HTTP URL with a host")
+    try:
+        _port = parsed_base_url.port
+    except ValueError as exc:
+        raise ValueError("Invalid base URL; provide a port between 0 and 65535") from exc
+    if parsed_base_url.username is not None or parsed_base_url.password is not None:
+        raise ValueError(
+            "Base URLs must not embed credentials; use authentication environment variables instead"
+        )
+    if parsed_base_url.query or parsed_base_url.fragment:
+        raise ValueError("Base URLs must not include query parameters or fragments")
     configured_environment = authentication_environment or {}
     authentication = {
         scheme.name: AuthenticationScheme(

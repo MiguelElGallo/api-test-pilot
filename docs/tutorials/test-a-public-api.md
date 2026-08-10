@@ -18,7 +18,7 @@ You need:
 
 - Python 3.12 or newer;
 - [`uv`](https://docs.astral.sh/uv/); and
-- a clone of the private API Test Pilot repository.
+- a clone of the API Test Pilot repository.
 
 Open a terminal in the repository folder. Install the locked dependencies:
 

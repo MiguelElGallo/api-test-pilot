@@ -89,6 +89,50 @@ def test_non_json_and_invalid_embedded_schema_are_reported() -> None:
     )
 
 
+def test_non_json_response_schemas_do_not_trigger_json_parsing() -> None:
+    """Text response contracts should validate their media type without JSON decoding."""
+    scenario = _scenario({"type": "string"}).model_copy(
+        update={
+            "expected_responses": [
+                ExpectedResponse(
+                    status_code=200,
+                    media_type="text/plain",
+                    response_schema={"type": "string"},
+                    headers=["X-Trace"],
+                )
+            ]
+        }
+    )
+    response = httpx.Response(
+        200,
+        text="not-json",
+        headers={"Content-Type": "text/plain", "X-Trace": "1"},
+    )
+
+    assert validate_response(response, scenario) == []
+
+
+def test_external_response_schema_reference_becomes_a_validation_failure() -> None:
+    """An unbundled response reference must fail one scenario instead of crashing the suite."""
+    response = httpx.Response(
+        200,
+        json={"status": "ok"},
+        headers={"Content-Type": "application/json", "X-Trace": "1"},
+    )
+
+    failures = validate_response(
+        response,
+        _scenario({"$ref": "https://schemas.example.test/health.json"}),
+    )
+
+    assert failures == [
+        (
+            "Response schema contains an unresolved external $ref; bundle referenced schemas "
+            "into the specification and use local #/ references"
+        )
+    ]
+
+
 def test_undocumented_status_has_no_additional_assertions() -> None:
     """Status handling remains the runner's responsibility when no assertion exists."""
     assert validate_response(httpx.Response(404), _scenario()) == []

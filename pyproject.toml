@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "api-test-pilot"
-version = "0.1.2"
+version = "0.1.3"
 description = "Contract-driven API scenario generation, execution, and AI-assisted failure analysis."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -34,6 +34,9 @@ api-test-pilot = "api_test_pilot.cli:app"
 [tool.pytest.ini_options]
 addopts = "--strict-config --strict-markers --cov=api_test_pilot --cov-report=term-missing --cov-fail-under=85"
 testpaths = ["tests"]
+# Test the checked-out source tree even when contributors use a non-editable uv environment.
+# Package installation is verified separately by the release workflow's wheel smoke test.
+pythonpath = ["src"]
 
 [tool.ruff]
 line-length = 100

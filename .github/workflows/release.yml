@@ -1,0 +1,129 @@
+# Validate, package, attest, and publish a GitHub release for an immutable version tag.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# Individual jobs receive only the permission that they need.
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify tag, source, and documentation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the tagged source
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+      - name: Install Python and locked dependencies
+        run: |
+          uv python install 3.12
+          uv sync --all-extras --group docs --locked --no-editable
+      - name: Confirm tag and package version match
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          package_version="$(uv run --no-sync python -c 'from pathlib import Path; import tomllib; print(tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"])')"
+          test "$RELEASE_TAG" = "v$package_version"
+      - name: Lint
+        run: uv run --no-sync ruff check .
+      - name: Check formatting
+        run: uv run --no-sync ruff format --check .
+      - name: Type-check
+        run: uv run --no-sync ty check
+      - name: Run tests from checked-out source
+        run: uv run --no-sync pytest
+      - name: Build and check documentation
+        run: uv run --no-sync zensical build --clean --strict
+
+  build:
+    name: Build package artifacts
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the tagged source
+        uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+      - name: Build wheel and source archive
+        run: uv build
+      - name: Upload package artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-dist
+          path: dist/
+          if-no-files-found: error
+
+  smoke-test:
+    name: Install and smoke-test the wheel
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download package artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: release-dist
+          path: dist
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+      - name: Install the wheel in a clean environment
+        run: |
+          uv python install 3.12
+          uv venv --python 3.12 .wheel-smoke
+          uv pip install --python .wheel-smoke/bin/python dist/*.whl
+          .wheel-smoke/bin/api-test-pilot --help
+
+  attest:
+    name: Attest package artifacts
+    needs: smoke-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      attestations: write
+      id-token: write
+    steps:
+      - name: Download package artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: release-dist
+          path: dist
+      - name: Create build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: dist/*
+
+  publish:
+    name: Create GitHub release
+    needs: attest
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download package artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: release-dist
+          path: dist
+      - name: Create immutable GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          if gh release view "$RELEASE_TAG" --repo "$REPOSITORY" >/dev/null 2>&1; then
+            echo "::error title=Release already exists::Release $RELEASE_TAG already exists. Published release assets are immutable; create a new version tag."
+            exit 1
+          fi
+          gh release create "$RELEASE_TAG" dist/* --generate-notes --verify-tag --repo "$REPOSITORY"

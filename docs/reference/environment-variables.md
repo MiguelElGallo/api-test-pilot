@@ -28,6 +28,14 @@ For example, `bearerAuth` becomes `API_TEST_AUTH_BEARERAUTH`. The exact name in 
 
 GitHub Copilot CLI manages its own authentication. In the generated workflow, `GITHUB_TOKEN` is made available only to the optional AI step on trusted scheduled or manually started runs.
 
+The workflow's manual `analyze_failures` input defaults to `false`. Scheduled failure analysis also
+defaults to off. Set the repository Actions variable below only after reviewing the response-data
+risk:
+
+| Repository Actions variable | Default | Meaning |
+| --- | --- | --- |
+| `API_TEST_PILOT_AI_FAILURE_ANALYSIS` | Unset | Set to `true` to analyze failures during scheduled runs. |
+
 ## Slack
 
 | Variable | Required | Meaning |

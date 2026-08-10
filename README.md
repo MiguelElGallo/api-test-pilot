@@ -3,6 +3,7 @@
 [![API regression](https://github.com/MiguelElGallo/api-test-pilot/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/MiguelElGallo/api-test-pilot/actions/workflows/ci.yml)
 [![Documentation](https://github.com/MiguelElGallo/api-test-pilot/actions/workflows/docs.yml/badge.svg?branch=main)](https://github.com/MiguelElGallo/api-test-pilot/actions/workflows/docs.yml)
 [![GitHub release](https://img.shields.io/github/v/release/MiguelElGallo/api-test-pilot?display_name=tag&sort=semver)](https://github.com/MiguelElGallo/api-test-pilot/releases/latest)
+[![Release checks](https://github.com/MiguelElGallo/api-test-pilot/actions/workflows/release.yml/badge.svg)](https://github.com/MiguelElGallo/api-test-pilot/actions/workflows/release.yml)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f.svg)](LICENSE)
 
@@ -18,7 +19,7 @@ email recipients.
 ## Initialize a target
 
 Prerequisites are Python 3.12+ and [uv](https://docs.astral.sh/uv/). Clone this public repository,
-install the locked environment, and point `init` at a local file or HTTPS specification:
+install the locked environment, and point `init` at a local file or HTTP/HTTPS specification:
 
 ```bash
 uv sync --all-extras --locked --no-editable
@@ -121,22 +122,33 @@ uv run --no-sync api-test-pilot init \
 ```
 
 Unresolved variables, executable pre-request/test scripts, non-JSON or multipart/form-data bodies,
-and unsupported authentication mechanisms fail explicitly. API Test Pilot never executes
-arbitrary Postman JavaScript or silently drops it.
+unsupported authentication mechanisms, and collections that target more than one origin fail
+explicitly. API Test Pilot never executes arbitrary Postman JavaScript, silently drops a body, or
+silently sends a request to a different origin.
 
 ## Schema-driven scenarios
 
 Request parameters and JSON bodies use documented examples for functional checks. Edge generation
 recursively exercises enums, numeric bounds, string lengths, object properties, arrays, nullable
-types, and composed schemas. Resource-safe caps prevent a large `maxLength` or `maxItems` from
-creating unreasonable payloads. Required path inputs receive deliberately invalid values instead
-of leaving unresolved `{parameter}` placeholders.
+types, and composed schemas. Compatible object `allOf` schemas are explicitly combined into one
+JSON body, and every generated request body is checked against the source schema. Unsupported or
+incompatible composition fails with a clear error. Resource-safe caps prevent a large `maxLength`
+or `maxItems` from creating unreasonable payloads. Required path inputs receive deliberately
+invalid values instead of leaving unresolved `{parameter}` placeholders.
+
+Only `application/json` request bodies are supported. An OpenAPI or Swagger operation that
+declares XML, multipart, form, `application/problem+json`, or another request format is rejected
+during generation rather than being sent as JSON. Response media types are always checked, but JSON
+Schema body validation is applied only to JSON responses. When a local OpenAPI or Swagger file
+declares a relative server such as `/api/v1`, supply an absolute `--base-url`; a remote
+specification can resolve that path against its own origin.
 
 ## AI-assisted workflows
 
-GitHub Actions installs GitHub Copilot CLI and grants only `contents: read` plus
-`copilot-requests: write`. The job-scoped `GITHUB_TOKEN` authenticates Copilot, so no standalone AI
-API key is stored. Locally, install and authenticate GitHub Copilot CLI first:
+GitHub Actions runs the deterministic regression first. On trusted scheduled or manually started
+runs, a separate best-effort AI job can then install GitHub Copilot CLI and request generation
+advice. Only that job receives `copilot-requests: write`; no standalone AI API key is stored.
+Locally, install and authenticate GitHub Copilot CLI first:
 
 ```bash
 copilot login
@@ -145,10 +157,12 @@ uv run --no-sync api-test-pilot run --config .api-test-pilot/config.yaml --ai-an
 ```
 
 Deterministic generation never depends on AI. Request headers, bodies, and credentials are excluded
-from model context. Scheduled and manually dispatched workflows save generation advice as
-`reports/ai-generation-advice.txt`; failure analysis is included only when failures exist. Copilot
-is installed and receives `GITHUB_TOKEN` only on trusted scheduled or manually dispatched runs,
-never during pull-request regression execution.
+from model context. Scheduled and manually dispatched workflows save generation advice in the
+separate `api-regression-ai-advice` artifact, under `ai-reports/ai-generation-advice.txt`. Failure
+analysis is off by default because it can include response excerpts. For a manual run, enable the
+`analyze_failures` input. For scheduled runs, set the repository Actions variable
+`API_TEST_PILOT_AI_FAILURE_ANALYSIS` to `true`. Copilot is never installed for pull-request
+regression. If AI is unavailable, the regression result and its reports remain authoritative.
 
 ## Reports and notifications
 
@@ -179,6 +193,10 @@ uv run --no-sync ruff format --check .
 uv run --no-sync ty check
 uv run --no-sync pytest
 ```
+
+Pytest is configured to import the checked-out `src/` tree, including when `uv sync --no-editable`
+is used. Release automation separately installs the built wheel into a clean environment and runs a
+small command-line smoke test, so source testing and packaging testing both remain covered.
 
 Read [how generation works](docs/explanation/how-generation-works.md) for the complete data flow.
 Security reporting instructions are in [SECURITY.md](SECURITY.md).

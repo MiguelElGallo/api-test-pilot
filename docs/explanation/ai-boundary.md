@@ -20,7 +20,10 @@ With `run --ai-analysis` or `analyze`, GitHub Copilot receives only failed scena
 
 Request headers and request bodies are excluded. The prompt also tells GitHub Copilot to treat response text as data, not as instructions.
 
-The response excerpt can still contain sensitive data returned by the API. Teams testing private data should decide whether AI analysis is appropriate for that target.
+The response excerpt can still contain sensitive data returned by the API. For that reason, failure
+analysis in GitHub Actions is off by default. A person must enable the `analyze_failures` input for
+a manual run, or a repository owner must set `API_TEST_PILOT_AI_FAILURE_ANALYSIS=true` for scheduled
+runs. Teams testing private data should decide whether AI analysis is appropriate for that target.
 
 ## AI is advice, not authority
 
@@ -30,4 +33,10 @@ This boundary keeps the useful part of AI—finding missing ideas and grouping l
 
 ## CI limits when Copilot runs
 
-The generated GitHub Actions workflow installs and calls GitHub Copilot CLI only for scheduled or manually started runs. Pull requests and normal pushes still run the fixed-rule regression, but they do not send test context to Copilot.
+The generated GitHub Actions workflow runs the fixed-rule regression first. It installs and calls
+GitHub Copilot CLI only in a separate best-effort job for scheduled or manually started runs.
+Generation advice runs automatically in that job. Failure analysis runs only with the explicit
+manual input or scheduled repository variable described above. Pull requests and normal pushes
+still run the fixed-rule regression, but they do not send test context to Copilot. An unavailable
+Copilot service is recorded as an AI limitation and cannot stop the factual regression result from
+being published.

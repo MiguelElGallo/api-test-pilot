@@ -6,8 +6,10 @@ from typing import TYPE_CHECKING, Any
 
 from jsonschema import SchemaError
 from jsonschema.validators import validator_for
+from referencing.exceptions import Unresolvable
 
 from api_test_pilot.models import ExpectedResponse, Scenario
+from api_test_pilot.schema import external_schema_references
 
 if TYPE_CHECKING:
     import httpx
@@ -34,14 +36,39 @@ def _media_type_matches(expected: str, actual: str) -> bool:
     return normalized_expected == "application/json" and normalized_actual.endswith("+json")
 
 
+def _is_json_media_type(media_type: str | None) -> bool:
+    """Return whether a documented media type carries a JSON representation."""
+    if media_type is None:
+        return False
+    normalized = media_type.split(";", 1)[0].strip().lower()
+    return normalized == "application/json" or normalized.endswith("+json")
+
+
 def _schema_errors(instance: Any, schema: dict[str, Any]) -> list[str]:
     """Return concise validation failures using the schema's declared dialect."""
+    if external_schema_references(schema):
+        return [
+            (
+                "Response schema contains an unresolved external $ref; bundle referenced schemas "
+                "into the specification and use local #/ references"
+            )
+        ]
     validator_type = validator_for(schema)
     try:
         validator_type.check_schema(schema)
     except SchemaError as exc:
         return [f"Invalid response schema in generated suite: {exc.message}"]
-    errors = sorted(validator_type(schema).iter_errors(instance), key=lambda item: list(item.path))
+    try:
+        errors = sorted(
+            validator_type(schema).iter_errors(instance), key=lambda item: list(item.path)
+        )
+    except Unresolvable:
+        return [
+            (
+                "Response schema contains an unresolved reference; bundle referenced schemas into "
+                "the specification and use local #/ references"
+            )
+        ]
     return [
         f"Response schema mismatch at {'/'.join(str(part) for part in error.path) or '<root>'}: "
         f"{error.message}"
@@ -67,7 +94,7 @@ def validate_response(response: httpx.Response, scenario: Scenario) -> list[str]
             f"Expected content type {expectation.media_type}, received "
             f"{actual_media_type or '<missing>'}"
         )
-    if expectation.response_schema is not None:
+    if expectation.response_schema is not None and _is_json_media_type(expectation.media_type):
         try:
             payload = response.json()
         except ValueError:
