@@ -17,7 +17,7 @@ api-test-pilot init --spec SOURCE [OPTIONS]
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `--spec TEXT` | Required | Local path or HTTP/HTTPS URL for an OpenAPI, Swagger, or Postman file. |
-| `--base-url TEXT` | From the specification | Replace the server URL. |
+| `--base-url TEXT` | From the specification | Replace the server URL. Required when a local OpenAPI or Swagger file uses a relative server URL. |
 | `--allow-method TEXT` | `GET`, `HEAD`, `OPTIONS` | Allow one HTTP method. Repeat the option to allow more than one. |
 | `--variable TEXT` | None | Set one non-secret Postman variable as `NAME=VALUE`. Repeat as needed. |
 | `--config PATH` | `.api-test-pilot/config.yaml` | Configuration file to create. |
@@ -40,7 +40,7 @@ api-test-pilot generate [OPTIONS]
 | `--spec TEXT` | None | Specification path or URL. Required when `--config` is not used. |
 | `--config PATH` | None | Read the target, methods, authentication names, and output paths from a project configuration. |
 | `--output PATH` | From configuration or `generated-scenarios.yaml` | Scenario file to write. |
-| `--base-url TEXT` | From the specification | Replace the server URL. Valid only with `--spec`. |
+| `--base-url TEXT` | From the specification | Replace the server URL. Required for a local OpenAPI or Swagger file with a relative server URL; valid only with `--spec`. |
 | `--allow-method TEXT` | Safe methods | Allow one HTTP method. Repeat as needed. Valid only with `--spec`. |
 | `--variable TEXT` | None | Set one non-secret Postman variable. Valid only with `--spec`. |
 | `--ai` | Off | Print optional GitHub Copilot suggestions after fixed-rule generation. |

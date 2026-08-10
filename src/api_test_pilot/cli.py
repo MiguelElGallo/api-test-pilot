@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Annotated
 
@@ -16,7 +18,6 @@ from api_test_pilot.configuration import (
     TargetConfiguration,
     load_project_configuration,
     parse_variable_assignments,
-    write_project_configuration,
 )
 from api_test_pilot.contracts import Contract, normalize_contract
 from api_test_pilot.generation import generate_suite
@@ -25,7 +26,7 @@ from api_test_pilot.models import SAFE_HTTP_METHODS, ExecutionPolicy, RunSummary
 from api_test_pilot.notifications import notify_configured, settings_from_environment
 from api_test_pilot.reporting import write_all
 from api_test_pilot.runner import run_suite
-from api_test_pilot.workflow import write_workflow
+from api_test_pilot.workflow import render_workflow
 
 app = typer.Typer(no_args_is_help=True, help="Generate and run contract-driven API tests.")
 
@@ -37,6 +38,109 @@ def _write_suite(suite: ScenarioSuite, destination: Path) -> None:
         yaml.safe_dump(suite.model_dump(mode="json"), sort_keys=False),
         encoding="utf-8",
     )
+
+
+def _serialized_suite(suite: ScenarioSuite) -> str:
+    """Return a generated suite as deterministic, readable YAML."""
+    return yaml.safe_dump(suite.model_dump(mode="json"), sort_keys=False)
+
+
+def _serialized_configuration(configuration: ProjectConfiguration) -> str:
+    """Return project configuration as deterministic, readable YAML."""
+    return yaml.safe_dump(configuration.model_dump(mode="json"), sort_keys=False)
+
+
+def _stage_text(destination: Path, content: str) -> Path:
+    """Write content to a same-directory temporary file for an atomic replacement."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{destination.name}.",
+        suffix=".tmp",
+        dir=destination.parent,
+        text=True,
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(content)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
+    return temporary
+
+
+def _replace_file(source: Path, destination: Path) -> None:
+    """Replace a destination with a staged file through the platform atomic primitive."""
+    source.replace(destination)
+
+
+def _restore_initialization_outputs(
+    completed: list[Path], backups: dict[Path, Path]
+) -> tuple[list[tuple[Path, Path | None, OSError]], set[Path]]:
+    """Restore completed outputs, retaining a backup whenever restoring it fails."""
+    rollback_errors: list[tuple[Path, Path | None, OSError]] = []
+    preserved_recovery_backups: set[Path] = set()
+    for destination in reversed(completed):
+        backup = backups.get(destination)
+        try:
+            if backup is None:
+                destination.unlink(missing_ok=True)
+            else:
+                _replace_file(backup, destination)
+                backups.pop(destination)
+        except OSError as rollback_error:  # Continue restoring every completed output.
+            rollback_errors.append((destination, backup, rollback_error))
+            if backup is not None:
+                preserved_recovery_backups.add(backup)
+    return rollback_errors, preserved_recovery_backups
+
+
+def _rollback_error_details(rollback_errors: list[tuple[Path, Path | None, OSError]]) -> str:
+    """Describe rollback failures, including usable recovery paths for retained backups."""
+    return "; ".join(
+        (
+            "failed to restore overwritten destination "
+            f"{destination.resolve(strict=False)} from preserved recovery backup "
+            f"{backup.resolve(strict=False)}: {error}"
+            if backup is not None
+            else "failed to remove newly created destination "
+            f"{destination.resolve(strict=False)}: {error}"
+        )
+        for destination, backup, error in rollback_errors
+    )
+
+
+def _write_initialization_outputs(outputs: dict[Path, str]) -> None:
+    """Commit scaffold files together and restore prior outputs when a replacement fails."""
+    staged: dict[Path, Path] = {}
+    backups: dict[Path, Path] = {}
+    completed: list[Path] = []
+    preserved_recovery_backups: set[Path] = set()
+    try:
+        for destination, content in outputs.items():
+            staged[destination] = _stage_text(destination, content)
+        for destination in outputs:
+            if destination.exists():
+                backups[destination] = _stage_text(
+                    destination,
+                    destination.read_text(encoding="utf-8"),
+                )
+        for destination, temporary in staged.items():
+            _replace_file(temporary, destination)
+            completed.append(destination)
+    except Exception as original_error:
+        rollback_errors, preserved_recovery_backups = _restore_initialization_outputs(
+            completed, backups
+        )
+        if rollback_errors:
+            original_error.add_note(
+                f"Scaffold rollback also encountered: {_rollback_error_details(rollback_errors)}"
+            )
+        raise
+    finally:
+        for temporary in [*staged.values(), *backups.values()]:
+            if temporary not in preserved_recovery_backups:
+                temporary.unlink(missing_ok=True)
 
 
 def _read_suite(source: Path) -> ScenarioSuite:
@@ -72,22 +176,29 @@ def _print_ai_advice(contract: Contract, suite: ScenarioSuite) -> None:
     client = CopilotClient.discover()
     if client is None:
         typer.echo("AI advice skipped: GitHub Copilot CLI is not installed.", err=True)
-        raise typer.Exit(2)
-    advice = client.generation_advice(
-        {
-            "format": contract.source_format,
-            "base_url": suite.base_url,
-            "operations": [
-                {"id": operation.identifier, "method": operation.method, "path": operation.path}
-                for operation in contract.operations
-            ],
-        }
-    )
+        return
+    try:
+        advice = client.generation_advice(
+            {
+                "format": contract.source_format,
+                "base_url": suite.base_url,
+                "operations": [
+                    {"id": operation.identifier, "method": operation.method, "path": operation.path}
+                    for operation in contract.operations
+                ],
+            }
+        )
+    except AIAnalysisError as exc:
+        typer.echo(f"AI advice skipped: {exc}", err=True)
+        return
     typer.echo(advice)
 
 
 def _ensure_initialization_outputs_available(paths: list[Path], *, force: bool) -> None:
     """Preflight every scaffold destination so initialization is all-or-nothing."""
+    resolved_paths = [path.resolve(strict=False) for path in paths]
+    if len(set(resolved_paths)) != len(resolved_paths):
+        raise typer.BadParameter("Configuration, suite, and workflow destinations must be distinct")
     existing = [path for path in paths if path.exists()]
     if existing and not force:
         joined = ", ".join(str(path) for path in existing)
@@ -134,13 +245,12 @@ def initialize(  # noqa: PLR0917 - Typer exposes each project setting as an opti
             }
         }
     )
-    write_project_configuration(configuration, config_path, overwrite=True)
-    _write_suite(suite, suite_path)
-    write_workflow(
-        configuration,
-        workflow_path,
-        config_path=config_path,
-        overwrite=True,
+    _write_initialization_outputs(
+        {
+            config_path: _serialized_configuration(configuration),
+            suite_path: _serialized_suite(suite),
+            workflow_path: render_workflow(configuration, config_path=config_path),
+        }
     )
     typer.echo(
         f"Initialized {config_path}, {suite_path}, and {workflow_path} "

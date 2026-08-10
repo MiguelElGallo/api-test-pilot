@@ -54,6 +54,60 @@ def test_generate_command_writes_suite(
     assert len(yaml.safe_load(output.read_text(encoding="utf-8"))["scenarios"]) == 6
 
 
+def test_generate_with_missing_copilot_keeps_the_deterministic_suite(
+    tmp_path: Path,
+    openapi_document: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Optional AI advice must not turn successful deterministic generation into an error."""
+    spec = tmp_path / "openapi.yaml"
+    output = tmp_path / "suite.yaml"
+    spec.write_text(yaml.safe_dump(openapi_document), encoding="utf-8")
+    monkeypatch.setattr(cli_module.CopilotClient, "discover", classmethod(lambda _cls: None))
+
+    result = CliRunner().invoke(
+        app,
+        ["generate", "--spec", str(spec), "--output", str(output), "--ai"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert output.exists()
+    assert "AI advice skipped: GitHub Copilot CLI is not installed." in result.output
+
+
+def test_generate_with_failing_copilot_keeps_the_deterministic_suite(
+    tmp_path: Path,
+    openapi_document: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Copilot provider error must be diagnostic-only after the suite is written."""
+    spec = tmp_path / "openapi.yaml"
+    output = tmp_path / "suite.yaml"
+    spec.write_text(yaml.safe_dump(openapi_document), encoding="utf-8")
+
+    class FailingCopilot:
+        """Simulate a transient external Copilot service failure."""
+
+        def generation_advice(self, _contract: dict[str, object]) -> str:
+            """Raise the domain error returned by the optional provider adapter."""
+            raise AIAnalysisError("Copilot service unavailable")
+
+    monkeypatch.setattr(
+        cli_module.CopilotClient,
+        "discover",
+        classmethod(lambda _cls: FailingCopilot()),
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["generate", "--spec", str(spec), "--output", str(output), "--ai"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert output.exists()
+    assert "AI advice skipped: Copilot service unavailable" in result.output
+
+
 def test_analyze_command_updates_existing_reports(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

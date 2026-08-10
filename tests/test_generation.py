@@ -66,6 +66,44 @@ def test_relative_server_resolves_against_remote_contract(openapi_document: dict
     assert suite.base_url == "https://petstore.example.test/api/v3"
 
 
+def test_relative_server_requires_override_for_local_contract(
+    openapi_document: dict[str, Any],
+) -> None:
+    """A local specification cannot provide an executable origin for a relative server."""
+    openapi_document["servers"] = [{"url": "/api/v3"}]
+
+    with pytest.raises(ValueError, match=r"relative.*--base-url"):
+        generate_suite(parse_openapi(openapi_document), source="openapi.yaml")
+
+
+@pytest.mark.parametrize(
+    ("base_url", "message"),
+    [
+        ("https://user:secret@api.example.test", "must not embed credentials"),
+        ("https://api.example.test?tenant=north", "must not include query parameters"),
+        ("https://api.example.test#v1", "must not include query parameters"),
+    ],
+)
+def test_base_url_override_rejects_unsafe_components(
+    openapi_document: dict[str, Any], base_url: str, message: str
+) -> None:
+    """Suite base URLs cannot carry credentials or request-specific components."""
+    with pytest.raises(ValueError, match=message):
+        generate_suite(parse_openapi(openapi_document), source="fixture", base_url=base_url)
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    ["https://api.example.test:bad", "https://api.example.test:99999", "https:///items"],
+)
+def test_base_url_override_rejects_invalid_host_or_port(
+    openapi_document: dict[str, Any], base_url: str
+) -> None:
+    """Malformed host and port syntax must fail before a suite can reach transport."""
+    with pytest.raises(ValueError, match="Invalid base URL"):
+        generate_suite(parse_openapi(openapi_document), source="fixture", base_url=base_url)
+
+
 def test_default_policy_excludes_mutating_operations(openapi_document: dict[str, Any]) -> None:
     """Safe generation should require explicit opt-in for POST, PUT, PATCH, and DELETE."""
     suite = generate_suite(parse_openapi(openapi_document), source="fixture")
@@ -104,6 +142,262 @@ def test_edge_request_body_uses_schema_boundaries(openapi_document: dict[str, An
     assert functional.body == {"name": "probe", "quantity": 0}
     assert edge.body == {"name": "x" * 12, "quantity": 99}
     assert edge.body != functional.body
+
+
+def test_all_of_request_bodies_include_dereferenced_required_fields() -> None:
+    """Composed object bodies should inherit every required property for both positive cases."""
+    document = {
+        "openapi": "3.1.0",
+        "servers": [{"url": "https://api.example.test"}],
+        "components": {
+            "schemas": {
+                "Identity": {
+                    "type": "object",
+                    "required": ["id"],
+                    "properties": {"id": {"type": "integer", "minimum": 1}},
+                },
+                "Details": {
+                    "type": "object",
+                    "required": ["name"],
+                    "properties": {"name": {"type": "string", "minLength": 2, "maxLength": 5}},
+                },
+                "CreateItem": {
+                    "allOf": [
+                        {"$ref": "#/components/schemas/Identity"},
+                        {"$ref": "#/components/schemas/Details"},
+                    ]
+                },
+            }
+        },
+        "paths": {
+            "/items": {
+                "post": {
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/CreateItem"}
+                            }
+                        },
+                    },
+                    "responses": {"201": {"description": "created"}},
+                }
+            }
+        },
+    }
+
+    suite = generate_suite(parse_openapi(document), source="fixture", allowed_methods=["POST"])
+    functional, _, edge = suite.scenarios
+
+    assert functional.body == {"id": 1, "name": "xx"}
+    assert edge.body == {"id": 1, "name": "x" * 5}
+
+
+def test_all_of_request_bodies_merge_nested_dereferenced_object_branches() -> None:
+    """Nested object composition should retain fields inherited by an intermediate schema."""
+    document = {
+        "openapi": "3.1.0",
+        "servers": [{"url": "https://api.example.test"}],
+        "components": {
+            "schemas": {
+                "Identifier": {
+                    "type": "object",
+                    "required": ["id"],
+                    "properties": {"id": {"type": "integer", "minimum": 1}},
+                },
+                "Label": {
+                    "type": "object",
+                    "required": ["label"],
+                    "properties": {"label": {"type": "string", "minLength": 2}},
+                },
+                "Identity": {
+                    "allOf": [
+                        {"$ref": "#/components/schemas/Identifier"},
+                        {"$ref": "#/components/schemas/Label"},
+                    ]
+                },
+                "State": {
+                    "type": "object",
+                    "required": ["enabled"],
+                    "properties": {"enabled": {"type": "boolean"}},
+                },
+                "CreateItem": {
+                    "allOf": [
+                        {"$ref": "#/components/schemas/Identity"},
+                        {"$ref": "#/components/schemas/State"},
+                    ]
+                },
+            }
+        },
+        "paths": {
+            "/items": {
+                "post": {
+                    "requestBody": {
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/CreateItem"}
+                            }
+                        }
+                    },
+                    "responses": {"201": {"description": "created"}},
+                }
+            }
+        },
+    }
+
+    suite = generate_suite(parse_openapi(document), source="fixture", allowed_methods=["POST"])
+    functional, _, edge = suite.scenarios
+
+    assert functional.body == {"id": 1, "label": "xx", "enabled": True}
+    assert edge.body == {"id": 1, "label": "x" * 128, "enabled": False}
+
+
+def test_generation_fails_when_resource_caps_prevent_a_valid_edge_body() -> None:
+    """Resource caps must not quietly write an edge value below the documented minimum."""
+    document = {
+        "openapi": "3.1.0",
+        "servers": [{"url": "https://api.example.test"}],
+        "paths": {
+            "/items": {
+                "post": {
+                    "requestBody": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["value"],
+                                    "properties": {"value": {"type": "string", "minLength": 300}},
+                                }
+                            }
+                        }
+                    },
+                    "responses": {"200": {"description": "ok"}},
+                }
+            }
+        },
+    }
+
+    with pytest.raises(ValueError, match=r"Generated functional request body.*does not satisfy"):
+        generate_suite(parse_openapi(document), source="fixture", allowed_methods=["POST"])
+
+
+def test_generation_rejects_invalid_documented_positive_parameter_example() -> None:
+    """A functional parameter example must satisfy the normalized parameter schema."""
+    document = {
+        "openapi": "3.1.0",
+        "servers": [{"url": "https://api.example.test"}],
+        "paths": {
+            "/items": {
+                "get": {
+                    "parameters": [
+                        {
+                            "name": "limit",
+                            "in": "query",
+                            "required": True,
+                            "example": 6,
+                            "schema": {"type": "integer", "maximum": 5},
+                        }
+                    ],
+                    "responses": {"200": {"description": "ok"}},
+                }
+            }
+        },
+    }
+
+    with pytest.raises(
+        ValueError, match=r"Generated functional query parameter 'limit'.*does not satisfy"
+    ):
+        generate_suite(parse_openapi(document), source="fixture")
+
+
+def test_generation_rejects_invalid_edge_parameter_candidate_after_resource_cap() -> None:
+    """Edge parameter values must fail rather than bypassing a documented minimum length."""
+    document = {
+        "openapi": "3.1.0",
+        "servers": [{"url": "https://api.example.test"}],
+        "paths": {
+            "/items": {
+                "get": {
+                    "parameters": [
+                        {
+                            "name": "X-Token",
+                            "in": "header",
+                            "required": True,
+                            "example": "x" * 300,
+                            "schema": {"type": "string", "minLength": 300},
+                        }
+                    ],
+                    "responses": {"200": {"description": "ok"}},
+                }
+            }
+        },
+    }
+
+    with pytest.raises(
+        ValueError, match=r"Generated edge header parameter 'X-Token'.*does not satisfy"
+    ):
+        generate_suite(parse_openapi(document), source="fixture")
+
+
+@pytest.mark.parametrize(
+    ("version_key", "version", "parameter"),
+    [
+        (
+            "openapi",
+            "3.0.3",
+            {
+                "name": "score",
+                "in": "query",
+                "required": True,
+                "schema": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "exclusiveMinimum": True,
+                    "maximum": 10,
+                    "exclusiveMaximum": True,
+                },
+            },
+        ),
+        (
+            "swagger",
+            "2.0",
+            {
+                "name": "score",
+                "in": "query",
+                "required": True,
+                "type": "integer",
+                "minimum": 0,
+                "exclusiveMinimum": True,
+                "maximum": 10,
+                "exclusiveMaximum": True,
+            },
+        ),
+    ],
+)
+def test_generation_normalizes_legacy_boolean_exclusive_bounds(
+    version_key: str, version: str, parameter: dict[str, Any]
+) -> None:
+    """Swagger and OpenAPI 3.0 bounds should become valid numeric JSON Schema bounds."""
+    document = {
+        version_key: version,
+        "servers": [{"url": "https://api.example.test"}],
+        "host": "api.example.test",
+        "schemes": ["https"],
+        "paths": {
+            "/items": {
+                "get": {
+                    "parameters": [parameter],
+                    "responses": {"200": {"description": "ok"}},
+                }
+            }
+        },
+    }
+
+    suite = generate_suite(parse_openapi(document), source="fixture")
+    functional, _, edge = suite.scenarios
+
+    assert functional.query == {"score": 1}
+    assert edge.query == {"score": 9}
 
 
 def test_generation_preserves_auth_bindings_and_response_contracts() -> None:

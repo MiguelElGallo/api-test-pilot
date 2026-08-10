@@ -22,6 +22,7 @@ nav = [
     { "Allow write requests" = "how-to/allow-write-requests.md" },
     { "Read reports and use AI" = "how-to/read-reports-and-use-ai.md" },
     { "Send notifications" = "how-to/send-notifications.md" },
+    { "Prepare a release" = "how-to/prepare-a-release.md" },
   ] },
   { "Reference" = [
     "reference/index.md",

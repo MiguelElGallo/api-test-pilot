@@ -6,13 +6,18 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      analyze_failures:
+        description: Send failed response excerpts to GitHub Copilot
+        required: false
+        type: boolean
+        default: false
   schedule:
     - cron: "17 5 * * 1"
 
-# Use least privilege; Copilot requests power AI advice and failure analysis.
+# Core quality and regression jobs only read repository contents.
 permissions:
   contents: read
-  copilot-requests: write
 
 concurrency:
   group: api-regression-${{ github.ref }}
@@ -57,9 +62,6 @@ jobs:
         run: |
           uv python install 3.12
           uv sync --all-extras --locked --no-editable
-      - name: Install GitHub Copilot CLI
-        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-        run: npm install --global @github/copilot@1.0.78
       - name: Start deterministic example API
         run: |
           uv run --no-sync uvicorn api_test_pilot.example_api:app --host 127.0.0.1 --port 8000 &
@@ -69,32 +71,13 @@ jobs:
           done
           curl --fail --silent http://127.0.0.1:8000/health
       - name: Generate functional, negative, and edge scenarios
-        run: uv run --no-sync api-test-pilot generate --config .api-test-pilot/ci.yaml
-      - name: Generate AI-assisted test recommendations
-        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          set -o pipefail
-          mkdir -p reports
-          uv run --no-sync api-test-pilot generate \
-            --config .api-test-pilot/ci.yaml \
-            --ai | tee reports/ai-generation-advice.txt
+        run: uv run --no-sync api-test-pilot generate --config '.api-test-pilot/ci.yaml'
       - name: Execute regression
         id: regression
         continue-on-error: true
         run: >-
           uv run --no-sync api-test-pilot run
-          --config .api-test-pilot/ci.yaml
-      - name: Analyze failures with GitHub Copilot
-        if: >-
-          steps.regression.outcome == 'failure' &&
-          (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: >-
-          uv run --no-sync api-test-pilot analyze
-          --report reports/report.json
+          --config '.api-test-pilot/ci.yaml'
       - name: Upload generated scenarios and reports
         if: always()
         uses: actions/upload-artifact@v7
@@ -114,7 +97,78 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
-        run: uv run --no-sync api-test-pilot notify --report reports/report.json
+        run: uv run --no-sync api-test-pilot notify --report 'reports/report.json'
       - name: Preserve regression outcome
         if: steps.regression.outcome == 'failure'
         run: exit 1
+
+  ai-advice:
+    name: Optional GitHub Copilot advice
+    needs: regression
+    if: >-
+      always() &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      contents: read
+      copilot-requests: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+      - name: Install Python and dependencies
+        run: |
+          uv python install 3.12
+          uv sync --all-extras --locked --no-editable
+      - name: Install GitHub Copilot CLI
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          mkdir -p ai-reports
+          npm install --global @github/copilot@1.0.78 2>&1 | tee ai-reports/copilot-installation.txt
+      - name: Generate AI-assisted test recommendations
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -o pipefail
+          mkdir -p ai-reports
+          uv run --no-sync api-test-pilot generate \
+            --config '.api-test-pilot/ci.yaml' \
+            --ai 2>&1 | tee ai-reports/ai-generation-advice.txt
+      - name: Download deterministic regression report
+        if: always()
+        uses: actions/download-artifact@v8
+        with:
+          name: api-regression-report
+          path: deterministic-artifacts
+      - name: Analyze failures with GitHub Copilot
+        if: >-
+          always() &&
+          hashFiles('deterministic-artifacts/reports/report.json') != '' &&
+          (
+            (github.event_name == 'workflow_dispatch' && inputs.analyze_failures) ||
+            (github.event_name == 'schedule' &&
+              vars.API_TEST_PILOT_AI_FAILURE_ANALYSIS == 'true')
+          )
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -o pipefail
+          uv run --no-sync api-test-pilot analyze \
+            --report 'deterministic-artifacts/reports/report.json' \
+            2>&1 | tee ai-reports/ai-failure-analysis.txt
+      - name: Upload AI advice and analysis
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: api-regression-ai-advice
+          path: |
+            ai-reports/
+            deterministic-artifacts/reports/
+          if-no-files-found: warn

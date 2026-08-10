@@ -66,3 +66,13 @@ authentication:
 | --- | --- | --- | --- |
 | `suite` | String | `generated-scenarios.yaml` | Generated YAML scenario file. |
 | `reports` | String | `reports` | Directory for JSON, JUnit XML, and HTML reports. |
+
+## Paths used by GitHub Actions
+
+The configuration path passed to `init`, plus `artifacts.suite` and `artifacts.reports`, is written
+into the generated workflow. Use project-relative POSIX paths such as `reports/api` or
+`generated/scenarios.yaml`.
+
+These paths cannot be empty, be `.` by itself, be absolute, start with `-`, use `..` or backslashes,
+or contain control characters, single quotes, or GitHub expression characters (`$`, `{`, or `}`).
+Generation stops before writing an unsafe workflow.
