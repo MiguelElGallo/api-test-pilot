@@ -74,7 +74,7 @@ def _parse_document(raw: str, source: str) -> dict[str, Any]:
 
 
 def load_contract(source: str, *, timeout: float = 20.0) -> dict[str, Any]:
-    """Load an OpenAPI or Postman document from an HTTPS URL or local path."""
+    """Load an OpenAPI or Postman document from an HTTP(S) URL or local path."""
     parsed = urlparse(source)
     if parsed.scheme in {"http", "https"}:
         return _load_remote_contract(source, timeout=timeout)

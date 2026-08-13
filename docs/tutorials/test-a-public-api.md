@@ -56,7 +56,7 @@ Open `.api-test-pilot/config.yaml`:
 schema_version: '1.0'
 target:
   specification: examples/postman-echo.collection.json
-  base_url: null
+  base_url: https://postman-echo.com
   variables: {}
 execution:
   allowed_methods:
@@ -69,8 +69,8 @@ artifacts:
   reports: reports
 ```
 
-The Postman file already contains `https://postman-echo.com`, so `base_url` can stay empty. The
-allowed methods show that this first run cannot change data.
+The Postman file contains `https://postman-echo.com`, so `init` resolves and pins that trusted
+runtime target in `base_url`. The allowed methods show that this first run cannot change data.
 
 ## Run the tests
 

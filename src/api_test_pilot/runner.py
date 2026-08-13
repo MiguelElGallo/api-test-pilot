@@ -126,7 +126,10 @@ def run_suite(
         trusted_base_url=trusted_base_url,
     )
     started_at = datetime.now(UTC)
-    runtime_methods = {method.upper() for method in (runtime_allowed_methods or SAFE_HTTP_METHODS)}
+    selected_runtime_methods = (
+        SAFE_HTTP_METHODS if runtime_allowed_methods is None else runtime_allowed_methods
+    )
+    runtime_methods = {method.upper() for method in selected_runtime_methods}
     allowed_methods = set(suite.execution.allowed_methods) & runtime_methods
     if client is not None:
         results = [

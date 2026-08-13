@@ -187,6 +187,24 @@ def test_runner_accepts_mutating_method_only_from_independent_runtime_policy() -
     assert summary.passed == 1
 
 
+def test_runner_empty_runtime_policy_denies_all_methods() -> None:
+    """An explicitly empty runtime policy must not fall back to safe methods."""
+    calls = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        """Record any transport call after the policy should have blocked it."""
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200)
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        summary = run_suite(_suite(), client=client, runtime_allowed_methods=[])
+
+    assert calls == 0
+    assert summary.failed == 2
+    assert all("blocks HTTP method GET" in (result.error or "") for result in summary.results)
+
+
 def test_runner_rejects_suite_selected_environment_secret_before_transport() -> None:
     """Suite data must not grant itself access to an arbitrary process variable."""
     suite = _suite().model_copy(
