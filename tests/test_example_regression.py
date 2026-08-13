@@ -57,7 +57,7 @@ def test_generated_suite_passes_against_example_api() -> None:
             base_url=base_url,
             allowed_methods=["GET", "POST"],
         )
-        summary = run_suite(suite)
+        summary = run_suite(suite, runtime_allowed_methods={"GET", "POST"})
 
     assert summary.total == len(contract.operations) * 3
     assert summary.failed == 0

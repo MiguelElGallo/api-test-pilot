@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from time import perf_counter
 from typing import Any
@@ -11,6 +11,7 @@ import httpx
 
 from api_test_pilot.authentication import AuthenticationError, resolve_authentication
 from api_test_pilot.models import (
+    SAFE_HTTP_METHODS,
     AuthenticationScheme,
     RunSummary,
     Scenario,
@@ -18,6 +19,36 @@ from api_test_pilot.models import (
     ScenarioSuite,
 )
 from api_test_pilot.validation import validate_response
+
+
+class SuitePolicyError(ValueError):
+    """Indicate that suite data exceeds independently trusted runtime policy."""
+
+
+def _authentication_bindings(suite: ScenarioSuite) -> dict[str, str]:
+    """Return the secret environment names requested by a suite."""
+    return {name: scheme.environment_variable for name, scheme in suite.authentication.items()}
+
+
+def _validate_runtime_policy(
+    suite: ScenarioSuite,
+    *,
+    trusted_authentication: Mapping[str, str] | None,
+    trusted_base_url: str | None,
+) -> None:
+    """Keep suite-selected credentials and destinations inside trusted configuration."""
+    requested_authentication = _authentication_bindings(suite)
+    allowed_authentication = dict(trusted_authentication or {})
+    if requested_authentication != allowed_authentication:
+        raise SuitePolicyError(
+            "Suite authentication bindings do not match trusted runtime configuration"
+        )
+    if trusted_base_url is not None and suite.base_url.rstrip("/") != trusted_base_url.rstrip("/"):
+        raise SuitePolicyError("Suite base URL does not match trusted runtime configuration")
+    if requested_authentication and trusted_base_url is None:
+        raise SuitePolicyError(
+            "Authenticated suites require an explicit trusted base URL in project configuration"
+        )
 
 
 def _ensure_method_allowed(method: str, allowed_methods: set[str] | None) -> None:
@@ -54,6 +85,7 @@ def execute_scenario(
             headers=request_auth.headers,
             params=request_auth.query,
             json=scenario.body,
+            follow_redirects=False,
             **cookie_arguments,
         )
         status_code = response.status_code
@@ -83,10 +115,19 @@ def run_suite(
     timeout: float = 15.0,
     client: httpx.Client | None = None,
     environment: Mapping[str, str] | None = None,
+    runtime_allowed_methods: Iterable[str] | None = None,
+    trusted_authentication: Mapping[str, str] | None = None,
+    trusted_base_url: str | None = None,
 ) -> RunSummary:
     """Execute all scenarios and return a summary suitable for machine reporting."""
+    _validate_runtime_policy(
+        suite,
+        trusted_authentication=trusted_authentication,
+        trusted_base_url=trusted_base_url,
+    )
     started_at = datetime.now(UTC)
-    allowed_methods = set(suite.execution.allowed_methods)
+    runtime_methods = {method.upper() for method in (runtime_allowed_methods or SAFE_HTTP_METHODS)}
+    allowed_methods = set(suite.execution.allowed_methods) & runtime_methods
     if client is not None:
         results = [
             execute_scenario(
@@ -100,7 +141,7 @@ def run_suite(
             for scenario in suite.scenarios
         ]
     else:
-        with httpx.Client(timeout=timeout, follow_redirects=True) as owned_client:
+        with httpx.Client(timeout=timeout, follow_redirects=False) as owned_client:
             results = [
                 execute_scenario(
                     owned_client,

@@ -7,8 +7,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
+import pytest
 
 from api_test_pilot.models import (
+    AuthenticationKind,
+    AuthenticationScheme,
     ExecutionPolicy,
     ExpectedResponse,
     Scenario,
@@ -16,7 +19,7 @@ from api_test_pilot.models import (
     ScenarioSuite,
 )
 from api_test_pilot.reporting import write_all
-from api_test_pilot.runner import failure_payload, run_suite
+from api_test_pilot.runner import SuitePolicyError, failure_payload, run_suite
 
 
 def _suite() -> ScenarioSuite:
@@ -125,11 +128,11 @@ def test_runner_fails_on_response_schema_mismatch() -> None:
 
 
 def test_runner_blocks_method_outside_execution_policy() -> None:
-    """Hand-edited suites should not bypass the generated method allowlist."""
+    """A suite must not authorize its own mutating method at runtime."""
     suite = ScenarioSuite(
         source="fixture",
         base_url="https://api.example.test",
-        execution=ExecutionPolicy(allowed_methods=["GET"]),
+        execution=ExecutionPolicy(allowed_methods=["DELETE"]),
         scenarios=[
             Scenario(
                 identifier="delete",
@@ -156,3 +159,129 @@ def test_runner_blocks_method_outside_execution_policy() -> None:
     assert calls == 0
     assert summary.failed == 1
     assert "blocks HTTP method DELETE" in (summary.results[0].error or "")
+
+
+def test_runner_accepts_mutating_method_only_from_independent_runtime_policy() -> None:
+    """An explicit caller policy should preserve legitimate opted-in write tests."""
+    suite = ScenarioSuite(
+        source="fixture",
+        base_url="https://api.example.test",
+        execution=ExecutionPolicy(allowed_methods=["POST"]),
+        scenarios=[
+            Scenario(
+                identifier="create",
+                name="Create",
+                category=ScenarioCategory.FUNCTIONAL,
+                method="POST",
+                path="/items",
+                expected_statuses=[201],
+                description="Creates test data.",
+            )
+        ],
+    )
+    with httpx.Client(
+        transport=httpx.MockTransport(lambda _request: httpx.Response(201))
+    ) as client:
+        summary = run_suite(suite, client=client, runtime_allowed_methods={"POST"})
+
+    assert summary.passed == 1
+
+
+def test_runner_rejects_suite_selected_environment_secret_before_transport() -> None:
+    """Suite data must not grant itself access to an arbitrary process variable."""
+    suite = _suite().model_copy(
+        update={
+            "authentication": {
+                "Token": AuthenticationScheme(
+                    kind=AuthenticationKind.HTTP_BEARER,
+                    environment_variable="GITHUB_TOKEN",
+                )
+            },
+            "scenarios": [_suite().scenarios[0].model_copy(update={"security": [["Token"]]})],
+        }
+    )
+    calls = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        """Record any transport call after the policy should have failed."""
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200)
+
+    with (
+        httpx.Client(transport=httpx.MockTransport(handler)) as client,
+        pytest.raises(SuitePolicyError, match="authentication bindings"),
+    ):
+        run_suite(suite, client=client, environment={"GITHUB_TOKEN": "secret"})
+
+    assert calls == 0
+
+
+def test_runner_accepts_authentication_bound_to_trusted_config_and_origin() -> None:
+    """Trusted configuration should preserve authenticated API regression."""
+    suite = _suite().model_copy(
+        update={
+            "authentication": {
+                "Token": AuthenticationScheme(
+                    kind=AuthenticationKind.HTTP_BEARER,
+                    environment_variable="API_TEST_AUTH_TOKEN",
+                )
+            },
+            "scenarios": [_suite().scenarios[0].model_copy(update={"security": [["Token"]]})],
+        }
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        """Confirm the trusted credential reaches only the configured origin."""
+        assert request.url.host == "api.example.test"
+        assert request.headers["Authorization"] == "Bearer secret"
+        return httpx.Response(200)
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        summary = run_suite(
+            suite,
+            client=client,
+            environment={"API_TEST_AUTH_TOKEN": "secret"},
+            trusted_authentication={"Token": "API_TEST_AUTH_TOKEN"},
+            trusted_base_url="https://api.example.test",
+        )
+
+    assert summary.passed == 1
+
+
+def test_runner_never_follows_scenario_redirects() -> None:
+    """A redirect must not forward a custom API key to another origin."""
+    suite = _suite().model_copy(
+        update={
+            "authentication": {
+                "Token": AuthenticationScheme(
+                    kind=AuthenticationKind.API_KEY,
+                    environment_variable="API_TEST_AUTH_TOKEN",
+                    location="header",
+                    parameter_name="X-API-Key",
+                )
+            },
+            "scenarios": [
+                scenario.model_copy(update={"security": [["Token"]]})
+                for scenario in _suite().scenarios
+            ],
+        }
+    )
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        assert request.headers["X-API-Key"] == "secret"
+        return httpx.Response(302, headers={"Location": "https://evil.example/collect"})
+
+    with httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=True) as client:
+        summary = run_suite(
+            suite,
+            client=client,
+            environment={"API_TEST_AUTH_TOKEN": "secret"},
+            trusted_authentication={"Token": "API_TEST_AUTH_TOKEN"},
+            trusted_base_url="https://api.example.test",
+        )
+
+    assert calls == ["https://api.example.test/health", "https://api.example.test/missing"]
+    assert summary.failed == 2

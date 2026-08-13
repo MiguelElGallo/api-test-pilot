@@ -62,9 +62,11 @@ uv run --no-sync api-test-pilot init \
   --allow-method POST
 ```
 
-The list of allowed methods is embedded in the generated suite and enforced again immediately before
-each HTTP request. Hand-editing a scenario therefore cannot bypass the policy accidentally. This
-repository opts into `POST` only for its deterministic in-process FastAPI fixture.
+The generated suite records its allowed methods, but the runner also requires an independent
+runtime allowlist immediately before each HTTP request. Project runs take that authority from
+`.api-test-pilot/config.yaml`; direct suite runs default to safe methods and require an explicit
+`--allow-method` for writes. This repository opts into `POST` only for its deterministic in-process
+FastAPI fixture.
 
 ## Authentication and GitHub secrets
 
@@ -78,8 +80,10 @@ authentication:
   TenantKey: API_TEST_AUTH_TENANTKEY
 ```
 
-Set those variables locally before running the suite. In GitHub, create repository or environment
-secrets with the same names. The generated workflow contains explicit bindings such as:
+Set those variables locally before running the suite through its project configuration. Authenticated
+projects pin the resolved `base_url`, and the runner requires the suite's credential names and target
+to match that trusted configuration. In GitHub, create repository or environment secrets with the
+same names. The generated workflow contains explicit bindings such as:
 
 ```yaml
 env:
@@ -125,6 +129,9 @@ Unresolved variables, executable pre-request/test scripts, non-JSON or multipart
 unsupported authentication mechanisms, and collections that target more than one origin fail
 explicitly. API Test Pilot never executes arbitrary Postman JavaScript, silently drops a body, or
 silently sends a request to a different origin.
+
+Scenario execution does not automatically follow redirects. Remote contract loading follows only
+same-origin redirects and rejects cross-origin or HTTPS-downgrade hops.
 
 ## Schema-driven scenarios
 

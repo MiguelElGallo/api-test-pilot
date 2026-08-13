@@ -21,7 +21,7 @@ Unknown fields are rejected.
 | `schema_version` | String | Scenario format version. The current value is `"2.0"`. |
 | `source` | String | Specification path or URL used during generation. |
 | `base_url` | String | Server used for requests. |
-| `execution.allowed_methods` | String list | Methods that the runner will accept. |
+| `execution.allowed_methods` | String list | Methods requested by the suite; runtime policy must independently allow them. |
 | `authentication` | Object | Secret-free runtime bindings for security schemes. |
 | `scenarios` | List | Generated requests and expected responses. |
 
@@ -63,3 +63,7 @@ Each key in `authentication` is a security-scheme name.
 | `parameter_name` | String or `null` | API-key header or query name. |
 
 OAuth 2 and OpenID Connect bindings accept a ready-to-use bearer token. API Test Pilot does not perform an interactive login or token exchange.
+
+The suite does not grant itself access to environment variables. Authenticated execution requires a
+project configuration with the same scheme-to-variable bindings and an explicit matching base URL.
+Direct suite execution is secretless.

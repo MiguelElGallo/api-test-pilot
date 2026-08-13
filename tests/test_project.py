@@ -58,14 +58,20 @@ def test_init_scaffolds_shared_local_and_actions_configuration(
     configuration = load_project_configuration(Path(".api-test-pilot/config.yaml"))
     suite = yaml.safe_load(Path("generated-scenarios.yaml").read_text(encoding="utf-8"))
     workflow = Path(".github/workflows/api-regression.yml").read_text(encoding="utf-8")
+    yaml.safe_load(workflow)
     assert configuration.target.specification == str(spec)
     assert configuration.execution.allowed_methods == ["GET", "HEAD", "OPTIONS"]
     assert configuration.authentication == {"BearerAuth": "API_TEST_AUTH_BEARERAUTH"}
     assert len(suite["scenarios"]) == 3
     assert "api-test-pilot generate --config .api-test-pilot/config.yaml" in workflow
     assert "secrets.API_TEST_AUTH_BEARERAUTH" in workflow
+    assert configuration.target.base_url == "https://staging.example.test"
     assert "example_api" not in workflow
     regression_block = workflow.split("  regression:\n", 1)[1].split("  ai-advice:\n", 1)[0]
+    execution_block = regression_block.split("- name: Execute regression", 1)[1].split(
+        "- name: Upload generated scenarios and reports", 1
+    )[0]
+    assert "if: github.event_name != 'pull_request'" in execution_block
     ai_block = workflow.split("  ai-advice:\n", 1)[1]
     root_permissions = workflow.split("concurrency:", 1)[0]
     assert "GitHub Copilot" not in regression_block
@@ -397,6 +403,10 @@ def test_checked_in_ci_isolates_optional_copilot_from_core_regression() -> None:
     )[0]
     assert "inputs.analyze_failures" in analysis_block
     assert "vars.API_TEST_PILOT_AI_FAILURE_ANALYSIS == 'true'" in analysis_block
+    notification_block = regression_block.split(
+        "- name: Notify configured Slack or email channels", 1
+    )[1].split("- name: Preserve regression outcome", 1)[0]
+    assert "github.event_name != 'pull_request'" in notification_block
 
 
 def test_variable_assignment_parser_is_strict() -> None:
