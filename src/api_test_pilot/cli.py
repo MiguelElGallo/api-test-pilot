@@ -240,9 +240,10 @@ def initialize(  # noqa: PLR0917 - Typer exposes each project setting as an opti
     suite = _suite_from_configuration(provisional)
     configuration = provisional.model_copy(
         update={
+            "target": target.model_copy(update={"base_url": suite.base_url}),
             "authentication": {
                 name: scheme.environment_variable for name, scheme in suite.authentication.items()
-            }
+            },
         }
     )
     _write_initialization_outputs(
@@ -321,16 +322,37 @@ def run(
         bool,
         typer.Option(help="Ask GitHub Copilot CLI to analyze failed scenarios."),
     ] = False,
+    allow_method: Annotated[
+        list[str] | None,
+        typer.Option("--allow-method", help="Runtime-authorized HTTP method; repeat as needed."),
+    ] = None,
 ) -> None:
     """Run a suite, write reports, and fail when any scenario fails."""
     if config_path is not None:
+        if allow_method:
+            raise typer.BadParameter("--config cannot be combined with --allow-method")
         configuration = load_project_configuration(config_path)
+        if configuration.authentication and configuration.target.base_url is None:
+            raise typer.BadParameter(
+                "Authenticated projects require target.base_url to bind credentials to one origin"
+            )
         selected_suite = suite_path or Path(configuration.artifacts.suite)
         selected_reports = report_dir or Path(configuration.artifacts.reports)
+        runtime_allowed_methods = configuration.execution.allowed_methods
+        trusted_authentication = configuration.authentication
+        trusted_base_url = configuration.target.base_url
     else:
         selected_suite = suite_path or Path("generated-scenarios.yaml")
         selected_reports = report_dir or Path("reports")
-    summary = run_suite(_read_suite(selected_suite))
+        runtime_allowed_methods = allow_method or list(SAFE_HTTP_METHODS)
+        trusted_authentication = {}
+        trusted_base_url = None
+    summary = run_suite(
+        _read_suite(selected_suite),
+        runtime_allowed_methods=runtime_allowed_methods,
+        trusted_authentication=trusted_authentication,
+        trusted_base_url=trusted_base_url,
+    )
     if ai_analysis and summary.failed:
         client = CopilotClient.discover()
         if client is not None:

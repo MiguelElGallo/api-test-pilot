@@ -10,13 +10,26 @@ This is a default, not a claim that every `GET` endpoint is harmless. The person
 
 ## The method rule is checked twice
 
-Generation skips operations whose methods are not allowed. The suite also stores the allowed methods, and the runner checks the rule immediately before each request.
+Generation skips operations whose methods are not allowed. The suite records those methods, and the
+runner intersects them with an independent runtime policy immediately before each request. Project
+runs use the project configuration; direct suite runs default to safe methods.
 
-The second check matters because a generated YAML file can be edited. Adding a `DELETE` scenario by hand does not make it runnable unless `DELETE` is also allowed by the suite policy.
+The second check matters because a generated YAML file can be edited. Adding a `DELETE` scenario and
+changing its embedded policy still does not make it runnable unless trusted runtime configuration or
+an explicit direct-run `--allow-method DELETE` also permits it.
 
 ## Secrets stay outside generated files
 
-The configuration and suite store environment-variable names, not credentials. A secret is read only when authentication is added to a request. Reports do not contain request headers or bodies.
+The configuration and suite store environment-variable names, not credentials. The configuration
+also pins the authenticated target URL. Before reading a secret, the runner verifies that the suite's
+bindings and target match that independent configuration. Reports do not contain runtime-injected
+authentication values.
+
+## Redirects do not expand trust
+
+Scenario requests do not follow redirects automatically, so credentials and request bodies cannot be
+forwarded to a second origin. Contract retrieval permits only same-origin redirects and rejects
+cross-origin or HTTPS-downgrade destinations.
 
 This design does not make every response safe to share. A failed API can return private data in its response, and the report keeps up to the first 1,000 characters for diagnosis. Treat reports according to the data returned by the tested API.
 

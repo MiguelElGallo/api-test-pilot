@@ -61,8 +61,11 @@ api-test-pilot run [OPTIONS]
 | `--config PATH` | None | Read suite and report paths from a project configuration. |
 | `--report-dir PATH` | From configuration or `reports` | Directory for the reports. |
 | `--ai-analysis` | Off | Ask GitHub Copilot to analyze failed scenarios. |
+| `--allow-method TEXT` | Safe methods | Runtime-authorize a method for a direct suite run. Repeat as needed; cannot be combined with `--config`. |
 
 The exit code is `1` when any scenario fails. A completed run always writes JSON, JUnit XML, and HTML reports before returning that code.
+Authenticated suites must run with `--config`. Their authentication bindings and base URL must match
+the trusted project configuration. `init` pins the resolved base URL for this purpose.
 
 ## `analyze`
 

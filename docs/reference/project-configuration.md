@@ -36,7 +36,7 @@ Unknown fields are rejected.
 | Field | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `specification` | String | Required | Local path or HTTP/HTTPS URL. |
-| `base_url` | String or `null` | `null` | Server URL override. |
+| `base_url` | String or `null` | `null` | Server URL override and trusted runtime target. `init` stores the resolved absolute URL. |
 | `variables` | String map | `{}` | Non-secret values used to replace Postman `{{variables}}`. |
 
 When `base_url` is set, it also supplies the Postman variable `baseUrl` unless `target.variables.baseUrl` is already set.
@@ -53,6 +53,9 @@ execution:
 ## `authentication`
 
 Keys must match security-scheme names in the specification. Values name environment variables; they never contain the secrets themselves.
+
+Authenticated execution requires an explicit `target.base_url`; the runner rejects a suite whose
+target or scheme-to-variable bindings differ from this configuration.
 
 ```yaml
 authentication:

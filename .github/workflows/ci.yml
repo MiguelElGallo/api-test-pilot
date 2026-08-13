@@ -88,7 +88,10 @@ jobs:
             reports/
           if-no-files-found: error
       - name: Notify configured Slack or email channels
-        if: always() && hashFiles('reports/report.json') != ''
+        if: >-
+          always() &&
+          github.event_name != 'pull_request' &&
+          hashFiles('reports/report.json') != ''
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
